@@ -1,436 +1,205 @@
 <!DOCTYPE html>
 <html lang="ja">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>処方箋受付</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <title>処方箋送信</title>
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      padding: 20px;
-      text-align: center;
-      background-color: #f0f2f5;
-      color: #333;
-    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; text-align: center; background-color: #f0f2f5; color: #333; }
+    h2 { margin-bottom: 15px; font-size: 1.3rem; color: #111; }
+    
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; text-align: left; }
+    .label { font-size: 0.75rem; color: #888; margin-top: 12px; font-weight: bold; }
+    .value { font-size: 1.1rem; font-weight: bold; border-bottom: 1px solid #eee; padding-bottom: 4px; min-height: 24px; color: #333; }
+    .drug-list { font-size: 0.95rem; background: #f9f9f9; padding: 10px; border-radius: 8px; margin-top: 5px; white-space: pre-wrap; line-height: 1.6; max-height: 300px; overflow-y: auto; border: 1px solid #eee; color: #444; }
 
-    h2 {
-      font-size: 1.2rem;
-      margin-bottom: 20px;
-      color: #444;
-    }
+    .btn { display: block; width: 100%; padding: 16px 0; border: none; border-radius: 50px; font-size: 1rem; font-weight: bold; cursor: pointer; margin-bottom: 15px; transition: transform 0.1s; }
+    .btn-camera { background-color: #06C755; color: white; box-shadow: 0 4px 10px rgba(6, 199, 85, 0.3); }
+    .btn-send { background-color: #007AFF; color: white; box-shadow: 0 4px 10px rgba(0, 122, 255, 0.3); }
+    .btn-reset { background-color: #666; color: white; font-size: 0.9rem; padding: 10px 0; margin-top: 20px; box-shadow: none; }
+    .btn:active { transform: scale(0.98); }
+    
+    .counter { background: #333; color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; display: inline-block; margin-bottom: 10px; }
 
-    #scan-container {
-      position: relative;
-      width: 100%;
-      max-width: 480px;
-      margin: 0 auto 20px;
-      border-radius: 12px;
-      overflow: hidden;
-      background: #000;
-      display: none;
-    }
-
-    video {
-      width: 100%;
-      height: auto;
-      display: block;
-      object-fit: cover;
-    }
-
-    canvas {
-      display: none;
-    }
-
-    /* Hidden canvas for processing */
-
-    /* Overlay with a scanner frame guide */
-    #scan-overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      box-sizing: border-box;
-      /* darkened outer area with clear center */
-      background: radial-gradient(rect, transparent 60%, rgba(0, 0, 0, 0.5) 65%);
-      display: none;
-    }
-
-    #guide-frame {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 70%;
-      height: 50%;
-      /* Target scan area */
-      transform: translate(-50%, -50%);
-      border: 3px solid #06C755;
-      border-radius: 10px;
-      box-shadow: 0 0 10px rgba(6, 199, 85, 0.5);
-    }
-
-    #debug-console {
-      width: 100%;
-      height: 80px;
-      margin-bottom: 10px;
-      background: rgba(0, 0, 0, 0.8);
-      color: lime;
-      font-family: monospace;
-      font-size: 10px;
-      overflow-y: scroll;
-      text-align: left;
-      padding: 5px;
-      border-radius: 4px;
-      border: 1px solid #333;
-      display: none;
-      /* Hidden by default */
-    }
-
-    .card {
-      background: white;
-      padding: 20px;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-      margin-bottom: 20px;
-      text-align: left;
-    }
-
-    .label {
-      font-size: 0.75rem;
-      color: #888;
-      margin-top: 12px;
-      font-weight: bold;
-    }
-
-    .value {
-      font-size: 1.1rem;
-      font-weight: bold;
-      border-bottom: 1px solid #eee;
-      padding-bottom: 4px;
-      min-height: 24px;
-      color: #333;
-    }
-
-    .drug-list {
-      font-size: 0.95rem;
-      background: #f9f9f9;
-      padding: 10px;
-      border-radius: 8px;
-      margin-top: 5px;
-      white-space: pre-wrap;
-      line-height: 1.6;
-      max-height: 300px;
-      overflow-y: auto;
-      border: 1px solid #eee;
-      color: #444;
-    }
-
-    .btn {
-      display: block;
-      width: 100%;
-      padding: 16px 0;
-      border: none;
-      border-radius: 50px;
-      font-size: 1rem;
-      font-weight: bold;
-      cursor: pointer;
-      margin-bottom: 15px;
-    }
-
-    .btn-camera {
-      background-color: #06C755;
-      color: white;
-    }
-
-    .btn-stop {
-      background-color: #FF3B30;
-      color: white;
-      display: none;
-    }
-
-    .btn-send {
-      background-color: #007AFF;
-      color: white;
-    }
-
-    .btn-reset {
-      background-color: #8E8E93;
-      color: white;
-      margin-top: 20px;
-    }
-
-    .hidden {
-      display: none !important;
-    }
+    #raw-data-area { display: none; margin-top: 30px; text-align: left; }
+    #raw-text { width: 100%; height: 100px; font-size: 10px; background: #eee; border: 1px solid #999; }
+    .debug-link { font-size: 10px; color: #aaa; text-decoration: underline; cursor: pointer; display: block; margin-top: 20px;}
   </style>
 </head>
-
 <body>
-  <div id="debug-console">Log ready...</div>
 
   <h2>処方箋受付</h2>
-
-  <div id="scan-container">
-    <video id="video" playsinline></video>
-    <div id="scan-overlay">
-      <div id="guide-frame"></div>
-      <div style="position:absolute; bottom:10px; width:100%; text-align:center; color:white; font-size:0.9rem;">
-        緑の枠に合わせてください
-      </div>
-    </div>
-  </div>
-  <canvas id="canvas"></canvas>
-
-  <button id="btn-start" class="btn btn-camera" onclick="startCamera()">📷 カメラを起動</button>
-  <button id="btn-stop" class="btn btn-stop" onclick="stopCamera()">⏹ カメラを停止</button>
-
-  <div style="text-align: right; margin-bottom: 5px;">
-    <span style="font-size:10px; color:#aaa; cursor:pointer;" onclick="toggleDebug()">[Debug]</span>
+  
+  <div id="scan-status" style="margin-bottom:10px;">
+    <span class="counter" id="qr-count">読み取り数: 0枚</span>
   </div>
 
   <div class="card">
-    <div class="label">読み取り状況</div>
-    <div id="scan-status" class="value" style="font-size: 0.9rem; color: #666;">未スキャン</div>
     <div class="label">お名前</div>
-    <div class="value" id="disp-name">(未検出)</div>
+    <div class="value" id="disp-name"><span style="color:#ccc; font-weight:normal;">(未検出)</span></div>
+    
+    <div class="label">フリガナ</div>
+    <div class="value" id="disp-kana"><span style="color:#ccc; font-weight:normal;">(未検出)</span></div>
+    
     <div class="label">生年月日</div>
-    <div class="value" id="disp-birth">(未検出)</div>
+    <div class="value" id="disp-birth"><span style="color:#ccc; font-weight:normal;">(未検出)</span></div>
+
     <div class="label">処方内容</div>
-    <div class="drug-list" id="disp-drugs">（待機中）</div>
+    <div class="drug-list" id="disp-drugs">（読み取り待機中...）</div>
   </div>
 
-  <button class="btn btn-send hidden" id="send-btn" onclick="goToJotForm()">送信フォームへ進む</button>
-  <button class="btn btn-reset" onclick="resetAll()">🔄 リセット</button>
+  <button class="btn btn-camera" onclick="startScan()">📷 QRコードを読み取る</button>
+  <button class="btn btn-send" id="send-btn" onclick="goToJotForm()" style="display:none;">送信フォームへ進む</button>
+  <button class="btn btn-reset" onclick="resetAll()">🔄 最初からやり直す</button>
+  
+  <p id="msg" style="font-size:0.8rem; color:#999; margin-top:20px;">準備完了</p>
+
+  <span class="debug-link" onclick="toggleDebug()">[解析できない場合はここをタップ]</span>
+  <div id="raw-data-area">
+    <p style="font-size:10px; margin:0;">読み取りデータ(生):</p>
+    <textarea id="raw-text"></textarea>
+  </div>
 
   <script>
-    const MY_LIFF_ID = "2008819728-et8sw7Ou";
+    const MY_LIFF_ID = "2008819728-et8sw7Ou"; 
     const JOTFORM_ID = "253620819353054";
 
-    let video = document.getElementById("video");
-    let canvasElement = document.getElementById("canvas");
-    let canvas = canvasElement.getContext("2d", { willReadFrequently: true });
-    let scanning = false;
-    let stream = null;
-    let scannedData = [];
+    let scannedTexts = []; 
     let patientInfo = { name: "", kana: "", birth: "" };
     let drugList = [];
-    let frameCount = 0;
 
-    function log(msg) {
-      const d = new Date();
-      const t = d.getHours() + ":" + d.getMinutes() + ":" + d.getSeconds();
-      const c = document.getElementById("debug-console");
-      c.innerHTML = `[${t}] ${msg}<br>` + c.innerHTML;
-      console.log(msg);
-    }
-    function toggleDebug() {
-      const d = document.getElementById("debug-console");
-      d.style.display = d.style.display == "none" ? "block" : "none";
-    }
-
-    window.onload = function () {
-      liff.init({ liffId: MY_LIFF_ID }).then(() => {
-        if (!liff.isLoggedIn()) liff.login();
-      }).catch(err => log("LIFF Error: " + err));
+    window.onload = function() {
+      liff.init({ liffId: MY_LIFF_ID })
+        .then(() => { if (!liff.isLoggedIn()) liff.login(); })
+        .catch((err) => { document.getElementById('msg').innerText = "初期化エラー: " + err; });
     };
 
-    async function startCamera() {
-      document.getElementById("btn-start").classList.add("hidden");
-      document.getElementById("btn-stop").style.display = "block";
-      document.getElementById("scan-container").style.display = "block";
-      document.getElementById("scan-overlay").style.display = "block";
-
+    async function startScan() {
+      if (!liff.isInClient()) { alert("LINEアプリ内から開いてください"); return; }
       try {
-        const constraints = {
-          video: {
-            facingMode: "environment",
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            // Try to force continuous focus if browser supports it
-            advanced: [{ focusMode: "continuous" }]
-          }
-        };
-
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream;
-        video.setAttribute("playsinline", true);
-        await video.play();
-
-        // Check actual capabilities regarding torque/focus
-        const track = stream.getVideoTracks()[0];
-        const caps = track.getCapabilities ? track.getCapabilities() : {};
-        log("Camera Caps: " + JSON.stringify(caps));
-
-        scanning = true;
-        frameCount = 0;
-        requestAnimationFrame(tick);
-      } catch (err) {
-        alert("エラー: " + err.message);
-        stopCamera();
-      }
-    }
-
-    function stopCamera() {
-      scanning = false;
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-      }
-      document.getElementById("btn-start").classList.remove("hidden");
-      document.getElementById("btn-stop").style.display = "none";
-      document.getElementById("scan-container").style.display = "none";
-      document.getElementById("scan-status").innerText = "停止中 (" + scannedData.length + "枚)";
-    }
-
-    function tick() {
-      if (!scanning) return;
-      frameCount++;
-
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        // We will scan ONLY the center area to improve performance/accuracy
-        // This effectively "zooms in" for the detector
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
-
-        // Scan area size (e.g., 60% of the frame)
-        const scanW = Math.floor(vw * 0.7);
-        const scanH = Math.floor(vh * 0.7);
-        const startX = Math.floor((vw - scanW) / 2);
-        const startY = Math.floor((vh - scanH) / 2);
-
-        // Adjust canvas to match scan area size
-        if (canvasElement.width !== scanW || canvasElement.height !== scanH) {
-          canvasElement.width = scanW;
-          canvasElement.height = scanH;
+        const result = await liff.scanCodeV2();
+        if (result.value) {
+           processQrData(result.value);
         }
-
-        // Draw only the center part to the canvas
-        canvas.drawImage(video, startX, startY, scanW, scanH, 0, 0, scanW, scanH);
-
-        const imageData = canvas.getImageData(0, 0, scanW, scanH);
-
-        try {
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "dontInvert",
-          });
-
-          if (code && code.data && code.data.length > 0) {
-            // Valid QR found
-            if (!scannedData.includes(code.data)) {
-              // Ensure it looks like JAHIS (starts with expected headers) or just accept it
-              log("Found: " + code.data.substring(0, 20) + "...");
-              handleScanSuccess(code.data);
-            }
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-      requestAnimationFrame(tick);
+      } catch (err) { console.error(err); }
     }
 
-    function handleScanSuccess(text) {
-      if (navigator.vibrate) navigator.vibrate(200);
-      scannedData.push(text);
-      analyzeAllData();
-      updateUI();
-
-      // Visual flash
-      const guide = document.getElementById("guide-frame");
-      guide.style.borderColor = "#00FF00"; // Bright green flash
-      guide.style.boxShadow = "0 0 20px #00FF00";
-      setTimeout(() => {
-        guide.style.borderColor = "#06C755";
-        guide.style.boxShadow = "0 0 10px rgba(6, 199, 85, 0.5)";
-      }, 500);
-
-      alert(scannedData.length + "枚目を読み取りました");
+    function processQrData(text) {
+      if (scannedTexts.includes(text)) { 
+        alert("【確認】そのQRコードは既に読み取っています。\n別のQRコードを読み取ってください。"); 
+        return; 
+      }
+      
+      scannedTexts.push(text);
+      document.getElementById('raw-text').value = scannedTexts.join("\n\n----------------\n\n");
+      
+      try {
+        analyzeAllData(); 
+        updateUI();
+        alert("読み取り成功！\n" + (scannedTexts.length) + "枚目のデータを追加しました。");
+        document.getElementById('msg').innerText = "次のQRコードがあれば読み取ってください";
+      } catch (e) {
+        alert("データ解析中にエラーが発生しました: " + e);
+      }
     }
 
     function analyzeAllData() {
-      // Re-run analysis on ALL scanned texts to merge data
-      patientInfo = { name: "", kana: "", birth: "" };
-      drugList = [];
-      let tempDrugs = [];
-
-      scannedData.forEach(text => {
-        const lines = text.split(/\r\n|\n|\r/);
+      drugList = []; 
+      
+      scannedTexts.forEach(rawText => {
+        const lines = rawText.split(/\r\n|\n|\r/);
+        
         lines.forEach(line => {
-          const cols = line.trim().split(',');
-          if (cols.length < 2) return;
-
-          // 11: Patient Info
+          const cols = line.split(','); 
+          
+          // ■ 11: 患者情報
           if (cols[0] === "11") {
-            if (cols[2]) patientInfo.name = cols[2];
-            if (cols[3]) patientInfo.kana = cols[3];
-            if (cols[5] && cols[5].length === 8) {
-              patientInfo.birth = cols[5].replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
-            }
+            if (cols[2]) patientInfo.name = cols[2]; 
+            if (cols[3]) patientInfo.kana = cols[3]; 
+            if (cols[5] && cols[5].match(/^\d{8}$/)) patientInfo.birth = cols[5]; 
           }
-          // 13: Birthday (standalone)
-          if (cols[0] === "13" && cols[1] && cols[1].length === 8) {
-            patientInfo.birth = cols[1].replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+
+          // ■ 13: 生年月日 (JAHIS V13以降対応)
+          if (cols[0] === "13") {
+            if (cols[1]) patientInfo.birth = cols[1];
           }
-          // 201: Drugs
+
+          // ■ 111: 用法
+          if (cols[0] === "111") {
+            if (cols[4]) drugList.push("【用法】" + cols[4]);
+          }
+
+          // ■ 201: 薬品情報
           if (cols[0] === "201") {
-            const name = cols[6];
-            const amt = cols[7];
+            const drugName = cols[6];
+            const amount = cols[7];
             const unit = cols[9];
-            if (name) {
-              tempDrugs.push(`・${name} ${amt || ''} ${unit || ''}`);
+            
+            if (drugName) {
+              let info = "・" + drugName;
+              if (amount && unit) info += ` (${amount}${unit})`;
+              drugList.push(info);
             }
-          }
-          // 111: Usage
-          if (cols[0] === "111" && cols[4]) {
-            tempDrugs.push(`  [${cols[4]}]`);
           }
         });
+        
+        // バックアップ
+        if (!patientInfo.birth) {
+            const dateMatch = rawText.match(/(19|20)\d{6}/);
+            if (dateMatch) patientInfo.birth = dateMatch[0];
+        }
       });
-      drugList = tempDrugs;
     }
 
     function updateUI() {
-      document.getElementById('scan-status').innerText = scannedData.length + "枚 読み取り済み";
+      document.getElementById('qr-count').innerText = "読み取り数: " + scannedTexts.length + "枚";
       if (patientInfo.name) document.getElementById('disp-name').innerText = patientInfo.name;
-      if (patientInfo.kana) document.getElementById('disp-kana').innerText = patientInfo.kana; // hidden
+      if (patientInfo.kana) document.getElementById('disp-kana').innerText = patientInfo.kana;
       if (patientInfo.birth) document.getElementById('disp-birth').innerText = patientInfo.birth;
 
-      if (drugList.length) {
+      if (drugList.length > 0) {
         document.getElementById('disp-drugs').innerText = drugList.join("\n");
+      } else {
+        document.getElementById('disp-drugs').innerText = "（薬品情報は検出されませんでした）";
       }
 
-      if (patientInfo.name || drugList.length > 0) {
-        document.getElementById('send-btn').classList.remove("hidden");
+      if (patientInfo.name || patientInfo.birth) {
+        document.getElementById('send-btn').style.display = "block";
       }
     }
 
     function resetAll() {
-      if (!confirm("リセットしますか？")) return;
-      scannedData = [];
+      if(!confirm("読み取った内容をすべて消去して、最初からやり直しますか？")) return;
+      scannedTexts = [];
       patientInfo = { name: "", kana: "", birth: "" };
       drugList = [];
+      document.getElementById('disp-name').innerHTML = '<span style="color:#ccc; font-weight:normal;">(未検出)</span>';
+      document.getElementById('disp-kana').innerHTML = '<span style="color:#ccc; font-weight:normal;">(未検出)</span>';
+      document.getElementById('disp-birth').innerHTML = '<span style="color:#ccc; font-weight:normal;">(未検出)</span>';
+      document.getElementById('disp-drugs').innerText = "（読み取り待機中...）";
+      document.getElementById('qr-count').innerText = "読み取り数: 0枚";
+      document.getElementById('send-btn').style.display = "none";
+      document.getElementById('msg').innerText = "リセット完了";
+    }
 
-      document.getElementById('disp-name').innerText = "(未検出)";
-      document.getElementById('disp-kana').innerText = "(未検出)";
-      document.getElementById('disp-birth').innerText = "(未検出)";
-      document.getElementById('disp-drugs').innerText = "（待機中）";
-      document.getElementById('scan-status').innerText = "未スキャン";
-      document.getElementById('send-btn').classList.add("hidden");
+    function toggleDebug() {
+       const area = document.getElementById('raw-data-area');
+       area.style.display = (area.style.display === 'none' || area.style.display === '') ? 'block' : 'none';
     }
 
     function goToJotForm() {
-      if (!patientInfo.name && drugList.length === 0) { alert("データがありません"); return; }
-      const url = `https://form.jotform.com/${JOTFORM_ID}?` +
-        `name=${encodeURIComponent(patientInfo.name)}` +
-        `&kana=${encodeURIComponent(patientInfo.kana)}` +
-        `&birthdate=${encodeURIComponent(patientInfo.birth)}` +
-        `&prescription=${encodeURIComponent(drugList.join("\n"))}`;
-      liff.openWindow({ url: url, external: false });
+      const params = new URLSearchParams();
+      if (patientInfo.name) params.append("name", patientInfo.name);
+      if (patientInfo.kana) params.append("kana", patientInfo.kana);
+      if (patientInfo.birth) params.append("birthdate", patientInfo.birth);
+      if (drugList.length > 0) params.append("prescription", drugList.join("\n"));
+
+      liff.openWindow({
+        url: `https://form.jotform.com/${JOTFORM_ID}?${params.toString()}`,
+        external: false
+      });
     }
   </script>
 </body>
-
 </html>
