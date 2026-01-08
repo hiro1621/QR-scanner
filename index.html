@@ -1,205 +1,126 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>処方箋送信</title>
-  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; text-align: center; background-color: #f0f2f5; color: #333; }
-    h2 { margin-bottom: 15px; font-size: 1.3rem; color: #111; }
-    
-    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; text-align: left; }
-    .label { font-size: 0.75rem; color: #888; margin-top: 12px; font-weight: bold; }
-    .value { font-size: 1.1rem; font-weight: bold; border-bottom: 1px solid #eee; padding-bottom: 4px; min-height: 24px; color: #333; }
-    .drug-list { font-size: 0.95rem; background: #f9f9f9; padding: 10px; border-radius: 8px; margin-top: 5px; white-space: pre-wrap; line-height: 1.6; max-height: 300px; overflow-y: auto; border: 1px solid #eee; color: #444; }
-
-    .btn { display: block; width: 100%; padding: 16px 0; border: none; border-radius: 50px; font-size: 1rem; font-weight: bold; cursor: pointer; margin-bottom: 15px; transition: transform 0.1s; }
-    .btn-camera { background-color: #06C755; color: white; box-shadow: 0 4px 10px rgba(6, 199, 85, 0.3); }
-    .btn-send { background-color: #007AFF; color: white; box-shadow: 0 4px 10px rgba(0, 122, 255, 0.3); }
-    .btn-reset { background-color: #666; color: white; font-size: 0.9rem; padding: 10px 0; margin-top: 20px; box-shadow: none; }
-    .btn:active { transform: scale(0.98); }
-    
-    .counter { background: #333; color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; display: inline-block; margin-bottom: 10px; }
-
-    #raw-data-area { display: none; margin-top: 30px; text-align: left; }
-    #raw-text { width: 100%; height: 100px; font-size: 10px; background: #eee; border: 1px solid #999; }
-    .debug-link { font-size: 10px; color: #aaa; text-decoration: underline; cursor: pointer; display: block; margin-top: 20px;}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>処方箋QRスキャナー プロトタイプ</title>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin: 0; padding: 20px; }
+        #video { width: 100%; max-width: 500px; border: 1px solid #ccc; border-radius: 8px; }
+        #status { margin-top: 20px; padding: 15px; background: #f0f0f0; border-radius: 5px; }
+        .progress { color: #007bff; font-weight: bold; }
+    </style>
 </head>
 <body>
-
-  <h2>処方箋受付</h2>
-  
-  <div id="scan-status" style="margin-bottom:10px;">
-    <span class="counter" id="qr-count">読み取り数: 0枚</span>
-  </div>
-
-  <div class="card">
-    <div class="label">お名前</div>
-    <div class="value" id="disp-name"><span style="color:#ccc; font-weight:normal;">(未検出)</span></div>
+    <h2>処方箋QRスキャン</h2>
+    <video id="video"></video>
     
-    <div class="label">フリガナ</div>
-    <div class="value" id="disp-kana"><span style="color:#ccc; font-weight:normal;">(未検出)</span></div>
-    
-    <div class="label">生年月日</div>
-    <div class="value" id="disp-birth"><span style="color:#ccc; font-weight:normal;">(未検出)</span></div>
+    <div id="status">
+        <p id="message">QRコードをカメラに向けてください</p>
+        <div id="progress" class="progress"></div>
+    </div>
 
-    <div class="label">処方内容</div>
-    <div class="drug-list" id="disp-drugs">（読み取り待機中...）</div>
-  </div>
+    <script>
+        const codeReader = new ZXing.BrowserMultiFormatReader();
+        const videoElement = document.getElementById('video');
+        const messageElement = document.getElementById('message');
+        const progressElement = document.getElementById('progress');
 
-  <button class="btn btn-camera" onclick="startScan()">📷 QRコードを読み取る</button>
-  <button class="btn btn-send" id="send-btn" onclick="goToJotForm()" style="display:none;">送信フォームへ進む</button>
-  <button class="btn btn-reset" onclick="resetAll()">🔄 最初からやり直す</button>
-  
-  <p id="msg" style="font-size:0.8rem; color:#999; margin-top:20px;">準備完了</p>
+        // セッション管理用
+        let scanSession = {
+            parity: null,
+            totalCount: 0,
+            segments: {},
+        };
 
-  <span class="debug-link" onclick="toggleDebug()">[解析できない場合はここをタップ]</span>
-  <div id="raw-data-area">
-    <p style="font-size:10px; margin:0;">読み取りデータ(生):</p>
-    <textarea id="raw-text"></textarea>
-  </div>
-
-  <script>
-    const MY_LIFF_ID = "2008819728-et8sw7Ou"; 
-    const JOTFORM_ID = "253620819353054";
-
-    let scannedTexts = []; 
-    let patientInfo = { name: "", kana: "", birth: "" };
-    let drugList = [];
-
-    window.onload = function() {
-      liff.init({ liffId: MY_LIFF_ID })
-        .then(() => { if (!liff.isLoggedIn()) liff.login(); })
-        .catch((err) => { document.getElementById('msg').innerText = "初期化エラー: " + err; });
-    };
-
-    async function startScan() {
-      if (!liff.isInClient()) { alert("LINEアプリ内から開いてください"); return; }
-      try {
-        const result = await liff.scanCodeV2();
-        if (result.value) {
-           processQrData(result.value);
-        }
-      } catch (err) { console.error(err); }
-    }
-
-    function processQrData(text) {
-      if (scannedTexts.includes(text)) { 
-        alert("【確認】そのQRコードは既に読み取っています。\n別のQRコードを読み取ってください。"); 
-        return; 
-      }
-      
-      scannedTexts.push(text);
-      document.getElementById('raw-text').value = scannedTexts.join("\n\n----------------\n\n");
-      
-      try {
-        analyzeAllData(); 
-        updateUI();
-        alert("読み取り成功！\n" + (scannedTexts.length) + "枚目のデータを追加しました。");
-        document.getElementById('msg').innerText = "次のQRコードがあれば読み取ってください";
-      } catch (e) {
-        alert("データ解析中にエラーが発生しました: " + e);
-      }
-    }
-
-    function analyzeAllData() {
-      drugList = []; 
-      
-      scannedTexts.forEach(rawText => {
-        const lines = rawText.split(/\r\n|\n|\r/);
-        
-        lines.forEach(line => {
-          const cols = line.split(','); 
-          
-          // ■ 11: 患者情報
-          if (cols[0] === "11") {
-            if (cols[2]) patientInfo.name = cols[2]; 
-            if (cols[3]) patientInfo.kana = cols[3]; 
-            if (cols[5] && cols[5].match(/^\d{8}$/)) patientInfo.birth = cols[5]; 
-          }
-
-          // ■ 13: 生年月日 (JAHIS V13以降対応)
-          if (cols[0] === "13") {
-            if (cols[1]) patientInfo.birth = cols[1];
-          }
-
-          // ■ 111: 用法
-          if (cols[0] === "111") {
-            if (cols[4]) drugList.push("【用法】" + cols[4]);
-          }
-
-          // ■ 201: 薬品情報
-          if (cols[0] === "201") {
-            const drugName = cols[6];
-            const amount = cols[7];
-            const unit = cols[9];
-            
-            if (drugName) {
-              let info = "・" + drugName;
-              if (amount && unit) info += ` (${amount}${unit})`;
-              drugList.push(info);
+        // カメラ開始
+        codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
+            if (result) {
+                handleResult(result);
             }
-          }
         });
-        
-        // バックアップ
-        if (!patientInfo.birth) {
-            const dateMatch = rawText.match(/(19|20)\d{6}/);
-            if (dateMatch) patientInfo.birth = dateMatch[0];
+
+        function handleResult(result) {
+            const meta = result.resultMetadata;
+            
+            // 連結QR情報の取得（報告書 第6.1章のロジック）
+            if (meta && meta.has(ZXing.ResultMetadataType.STRUCTURED_APPEND_SEQUENCE)) {
+                const seqInfo = meta.get(ZXing.ResultMetadataType.STRUCTURED_APPEND_SEQUENCE);
+                const parity = meta.get(ZXing.ResultMetadataType.STRUCTURED_APPEND_PARITY);
+                const index = (seqInfo >> 4) & 0x0F;
+                const total = (seqInfo & 0x0F) + 1;
+
+                // 異なる処方箋の混入チェック
+                if (scanSession.parity !== null && scanSession.parity !== parity) {
+                    alert("別の処方箋が混ざっています。");
+                    return;
+                }
+
+                // セッション初期化
+                if (scanSession.parity === null) {
+                    scanSession.parity = parity;
+                    scanSession.totalCount = total;
+                }
+
+                // セグメントの保存
+                if (!scanSession.segments[index]) {
+                    scanSession.segments[index] = result.rawBytes; // 生バイナリを保持
+                    const currentCount = Object.keys(scanSession.segments).length;
+                    progressElement.innerText = `${currentCount} / ${total} 枚読み取り完了`;
+                    
+                    if (currentCount === total) {
+                        finalizeScanning();
+                    }
+                }
+            } else {
+                // 単一QRの場合
+                processFinalData(result.rawBytes);
+            }
         }
-      });
-    }
 
-    function updateUI() {
-      document.getElementById('qr-count').innerText = "読み取り数: " + scannedTexts.length + "枚";
-      if (patientInfo.name) document.getElementById('disp-name').innerText = patientInfo.name;
-      if (patientInfo.kana) document.getElementById('disp-kana').innerText = patientInfo.kana;
-      if (patientInfo.birth) document.getElementById('disp-birth').innerText = patientInfo.birth;
+        function finalizeScanning() {
+            // インデックス順に結合
+            const sortedKeys = Object.keys(scanSession.segments).map(Number).sort((a, b) => a - b);
+            let totalLength = sortedKeys.reduce((acc, k) => acc + scanSession.segments[k].length, 0);
+            let combined = new Uint8Array(totalLength);
+            let offset = 0;
+            sortedKeys.forEach(k => {
+                combined.set(scanSession.segments[k], offset);
+                offset += scanSession.segments[k].length;
+            });
+            processFinalData(combined);
+        }
 
-      if (drugList.length > 0) {
-        document.getElementById('disp-drugs').innerText = drugList.join("\n");
-      } else {
-        document.getElementById('disp-drugs').innerText = "（薬品情報は検出されませんでした）";
-      }
+        function processFinalData(uint8Array) {
+            // Shift-JISでデコード
+            const decoder = new TextDecoder("shift-jis");
+            const csvText = decoder.decode(uint8Array);
+            
+            // 簡易パースしてJotformへ（報告書 第7章）
+            const formData = simpleParse(csvText);
+            redirectToJotform(formData);
+        }
 
-      if (patientInfo.name || patientInfo.birth) {
-        document.getElementById('send-btn').style.display = "block";
-      }
-    }
+        function simpleParse(csv) {
+            const lines = csv.split(/\r\n|\n|\r/);
+            let data = { name: "", medications: [] };
+            lines.forEach(line => {
+                const cols = line.split(",");
+                if (cols[0] === "5") data.name = cols[1]; // 氏名
+                if (cols[0] === "211") data.medications.push(cols[3]); // 薬品名
+            });
+            return data;
+        }
 
-    function resetAll() {
-      if(!confirm("読み取った内容をすべて消去して、最初からやり直しますか？")) return;
-      scannedTexts = [];
-      patientInfo = { name: "", kana: "", birth: "" };
-      drugList = [];
-      document.getElementById('disp-name').innerHTML = '<span style="color:#ccc; font-weight:normal;">(未検出)</span>';
-      document.getElementById('disp-kana').innerHTML = '<span style="color:#ccc; font-weight:normal;">(未検出)</span>';
-      document.getElementById('disp-birth').innerHTML = '<span style="color:#ccc; font-weight:normal;">(未検出)</span>';
-      document.getElementById('disp-drugs').innerText = "（読み取り待機中...）";
-      document.getElementById('qr-count').innerText = "読み取り数: 0枚";
-      document.getElementById('send-btn').style.display = "none";
-      document.getElementById('msg').innerText = "リセット完了";
-    }
-
-    function toggleDebug() {
-       const area = document.getElementById('raw-data-area');
-       area.style.display = (area.style.display === 'none' || area.style.display === '') ? 'block' : 'none';
-    }
-
-    function goToJotForm() {
-      const params = new URLSearchParams();
-      if (patientInfo.name) params.append("name", patientInfo.name);
-      if (patientInfo.kana) params.append("kana", patientInfo.kana);
-      if (patientInfo.birth) params.append("birthdate", patientInfo.birth);
-      if (drugList.length > 0) params.append("prescription", drugList.join("\n"));
-
-      liff.openWindow({
-        url: `https://form.jotform.com/${JOTFORM_ID}?${params.toString()}`,
-        external: false
-      });
-    }
-  </script>
+        function redirectToJotform(data) {
+            const formID = "YOUR_FORM_ID"; // 本間様のJotform ID
+            const baseUrl = `https://form.jotform.com/${formID}`;
+            const params = new URLSearchParams();
+            params.append("fullName", data.name);
+            params.append("medications", data.medications.join("\n"));
+            window.location.href = `${baseUrl}?${params.toString()}`; // 自動入力遷移
+        }
+    </script>
 </body>
 </html>
