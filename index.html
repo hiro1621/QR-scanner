@@ -1,126 +1,463 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>処方箋QRスキャナー プロトタイプ</title>
-    <script src="https://unpkg.com/@zxing/library@latest"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>処方箋受付</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; margin: 0; padding: 20px; }
-        #video { width: 100%; max-width: 500px; border: 1px solid #ccc; border-radius: 8px; }
-        #status { margin-top: 20px; padding: 15px; background: #f0f0f0; border-radius: 5px; }
-        .progress { color: #007bff; font-weight: bold; }
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 15px;
+            text-align: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: white;
+            font-size: 1.4rem;
+            margin: 0 0 5px 0;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .version {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.75rem;
+            margin-bottom: 15px;
+        }
+
+        /* Scanner Area */
+        #reader-container {
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        #reader {
+            width: 100%;
+        }
+
+        /* Buttons */
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            padding: 18px;
+            border: none;
+            border-radius: 14px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.2s;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #06C755, #00B341);
+            color: white;
+            box-shadow: 0 4px 15px rgba(6, 199, 85, 0.4);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #4A90D9, #357ABD);
+            color: white;
+            box-shadow: 0 4px 15px rgba(74, 144, 217, 0.4);
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #FF6B6B, #EE5A5A);
+            color: white;
+            display: none;
+        }
+
+        .btn-submit {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-reset {
+            background: #888;
+            color: white;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Card */
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+            text-align: left;
+            margin-bottom: 15px;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            background: #f0f2f5;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .status-icon {
+            font-size: 1.5rem;
+        }
+
+        .status-text {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .status-bar.success {
+            background: #d4edda;
+        }
+
+        .status-bar.success .status-text {
+            color: #155724;
+        }
+
+        .field {
+            margin-bottom: 12px;
+        }
+
+        .field-label {
+            font-size: 0.7rem;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .field-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #333;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+            min-height: 30px;
+        }
+
+        .drug-list {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            white-space: pre-wrap;
+            line-height: 1.7;
+            max-height: 200px;
+            overflow-y: auto;
+            color: #444;
+        }
+
+        /* Hidden file input */
+        #file-input {
+            display: none;
+        }
+
+        /* Instructions */
+        .instructions {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 12px;
+            color: white;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            margin-bottom: 15px;
+            text-align: left;
+        }
+
+        .instructions strong {
+            display: block;
+            margin-bottom: 5px;
+        }
     </style>
 </head>
+
 <body>
-    <h2>処方箋QRスキャン</h2>
-    <video id="video"></video>
-    
-    <div id="status">
-        <p id="message">QRコードをカメラに向けてください</p>
-        <div id="progress" class="progress"></div>
+    <div class="container">
+        <h1>📋 処方箋受付</h1>
+        <div class="version">Ver 3.0</div>
+
+        <div class="instructions">
+            <strong>📸 使い方</strong>
+            「写真を撮って読み取る」ボタンで、処方箋のQRコードを撮影してください。ピントが合っている鮮明な写真が必要です。
+        </div>
+
+        <div id="reader-container">
+            <div id="reader"></div>
+        </div>
+
+        <div class="btn-group">
+            <button id="btn-photo" class="btn btn-primary" onclick="takePhoto()">
+                📸 写真を撮って読み取る
+            </button>
+            <button id="btn-camera" class="btn btn-secondary" onclick="startLiveScanner()">
+                🎥 ライブカメラ（試験的）
+            </button>
+            <button id="btn-stop" class="btn btn-stop" onclick="stopLiveScanner()">
+                ⏹ スキャン停止
+            </button>
+        </div>
+
+        <input type="file" id="file-input" accept="image/*" capture="environment" onchange="processImage(this)">
+
+        <div class="card">
+            <div id="status-bar" class="status-bar">
+                <span class="status-icon">⏳</span>
+                <span id="status-text" class="status-text">QRコード待機中</span>
+            </div>
+
+            <div class="field">
+                <div class="field-label">お名前</div>
+                <div class="field-value" id="disp-name">—</div>
+            </div>
+            <div class="field">
+                <div class="field-label">生年月日</div>
+                <div class="field-value" id="disp-birth">—</div>
+            </div>
+            <div class="field">
+                <div class="field-label">処方内容</div>
+                <div class="drug-list" id="disp-drugs">読み取り待機中...</div>
+            </div>
+        </div>
+
+        <button id="btn-submit" class="btn btn-submit hidden" onclick="submitToJotForm()">
+            ✉️ JotFormへ送信
+        </button>
+        <button class="btn btn-reset" onclick="resetAll()">🔄 リセット</button>
     </div>
 
     <script>
-        const codeReader = new ZXing.BrowserMultiFormatReader();
-        const videoElement = document.getElementById('video');
-        const messageElement = document.getElementById('message');
-        const progressElement = document.getElementById('progress');
+        const MY_LIFF_ID = "2008819728-et8sw7Ou";
+        const JOTFORM_ID = "253620819353054";
 
-        // セッション管理用
-        let scanSession = {
-            parity: null,
-            totalCount: 0,
-            segments: {},
+        let html5QrCode = null;
+        let allScannedTexts = [];
+        let patientInfo = { name: "", kana: "", birth: "" };
+        let drugList = [];
+
+        // --- LIFF Init ---
+        window.onload = () => {
+            liff.init({ liffId: MY_LIFF_ID })
+                .then(() => { if (!liff.isLoggedIn()) liff.login(); })
+                .catch(e => console.error("LIFF Error:", e));
         };
 
-        // カメラ開始
-        codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
-            if (result) {
-                handleResult(result);
+        // --- Primary: Photo Capture ---
+        function takePhoto() {
+            document.getElementById("file-input").click();
+        }
+
+        function processImage(input) {
+            if (!input.files || input.files.length === 0) return;
+
+            const file = input.files[0];
+            setStatus("processing", "画像を解析中...");
+
+            // Create instance for file scanning
+            const scanner = new Html5Qrcode("reader");
+
+            scanner.scanFile(file, /* showImage */ false)
+                .then(decodedText => {
+                    handleSuccess(decodedText);
+                })
+                .catch(err => {
+                    setStatus("error", "QRが見つかりません");
+                    alert("QRコードを検出できませんでした。\n\n・QRコードが画像の中央に大きく写っていますか？\n・ピントは合っていますか？\n・明るい場所で撮影してください。");
+                });
+
+            // Reset file input for next use
+            input.value = "";
+        }
+
+        // --- Secondary: Live Camera (experimental) ---
+        function startLiveScanner() {
+            document.getElementById("reader-container").style.display = "block";
+            document.getElementById("btn-photo").classList.add("hidden");
+            document.getElementById("btn-camera").classList.add("hidden");
+            document.getElementById("btn-stop").style.display = "flex";
+
+            html5QrCode = new Html5Qrcode("reader");
+
+            const config = {
+                fps: 10,
+                qrbox: { width: 280, height: 280 },
+                aspectRatio: 1.0,
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+            };
+
+            html5QrCode.start(
+                { facingMode: "environment" },
+                config,
+                (text) => handleSuccess(text),
+                () => { } // ignore failures
+            ).catch(err => {
+                alert("カメラを起動できませんでした: " + err);
+                stopLiveScanner();
+            });
+        }
+
+        function stopLiveScanner() {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => { });
+                html5QrCode = null;
             }
-        });
+            document.getElementById("reader-container").style.display = "none";
+            document.getElementById("btn-photo").classList.remove("hidden");
+            document.getElementById("btn-camera").classList.remove("hidden");
+            document.getElementById("btn-stop").style.display = "none";
+        }
 
-        function handleResult(result) {
-            const meta = result.resultMetadata;
-            
-            // 連結QR情報の取得（報告書 第6.1章のロジック）
-            if (meta && meta.has(ZXing.ResultMetadataType.STRUCTURED_APPEND_SEQUENCE)) {
-                const seqInfo = meta.get(ZXing.ResultMetadataType.STRUCTURED_APPEND_SEQUENCE);
-                const parity = meta.get(ZXing.ResultMetadataType.STRUCTURED_APPEND_PARITY);
-                const index = (seqInfo >> 4) & 0x0F;
-                const total = (seqInfo & 0x0F) + 1;
+        // --- Handle Scan Success ---
+        function handleSuccess(text) {
+            if (allScannedTexts.includes(text)) return; // duplicate
 
-                // 異なる処方箋の混入チェック
-                if (scanSession.parity !== null && scanSession.parity !== parity) {
-                    alert("別の処方箋が混ざっています。");
-                    return;
-                }
+            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+            allScannedTexts.push(text);
 
-                // セッション初期化
-                if (scanSession.parity === null) {
-                    scanSession.parity = parity;
-                    scanSession.totalCount = total;
-                }
+            parseJAHIS();
+            updateDisplay();
 
-                // セグメントの保存
-                if (!scanSession.segments[index]) {
-                    scanSession.segments[index] = result.rawBytes; // 生バイナリを保持
-                    const currentCount = Object.keys(scanSession.segments).length;
-                    progressElement.innerText = `${currentCount} / ${total} 枚読み取り完了`;
-                    
-                    if (currentCount === total) {
-                        finalizeScanning();
+            setStatus("success", allScannedTexts.length + "枚 読み取り完了！");
+        }
+
+        // --- JAHIS Parser ---
+        function parseJAHIS() {
+            patientInfo = { name: "", kana: "", birth: "" };
+            drugList = [];
+
+            allScannedTexts.forEach(text => {
+                const lines = text.split(/\r?\n/);
+                lines.forEach(line => {
+                    const cols = line.split(",");
+                    if (cols.length < 2) return;
+
+                    const recType = cols[0];
+
+                    // Patient info (record 11)
+                    if (recType === "11") {
+                        if (cols[2]) patientInfo.name = cols[2];
+                        if (cols[3]) patientInfo.kana = cols[3];
+                        if (cols[5] && cols[5].length === 8) {
+                            patientInfo.birth = cols[5].replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
+                        }
                     }
-                }
-            } else {
-                // 単一QRの場合
-                processFinalData(result.rawBytes);
+                    // Birthday standalone (record 13)
+                    if (recType === "13" && cols[1] && cols[1].length === 8) {
+                        patientInfo.birth = cols[1].replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
+                    }
+                    // Drug (record 201)
+                    if (recType === "201" && cols[6]) {
+                        const name = cols[6];
+                        const amount = cols[7] || "";
+                        const unit = cols[9] || "";
+                        drugList.push(`・${name} ${amount}${unit}`);
+                    }
+                    // Usage (record 111)
+                    if (recType === "111" && cols[4]) {
+                        drugList.push(`  → ${cols[4]}`);
+                    }
+                });
+            });
+        }
+
+        // --- UI Updates ---
+        function updateDisplay() {
+            document.getElementById("disp-name").textContent = patientInfo.name || "—";
+            document.getElementById("disp-birth").textContent = patientInfo.birth || "—";
+            document.getElementById("disp-drugs").textContent = drugList.length > 0 ? drugList.join("\n") : "（処方データなし）";
+
+            if (patientInfo.name || drugList.length > 0) {
+                document.getElementById("btn-submit").classList.remove("hidden");
             }
         }
 
-        function finalizeScanning() {
-            // インデックス順に結合
-            const sortedKeys = Object.keys(scanSession.segments).map(Number).sort((a, b) => a - b);
-            let totalLength = sortedKeys.reduce((acc, k) => acc + scanSession.segments[k].length, 0);
-            let combined = new Uint8Array(totalLength);
-            let offset = 0;
-            sortedKeys.forEach(k => {
-                combined.set(scanSession.segments[k], offset);
-                offset += scanSession.segments[k].length;
+        function setStatus(type, message) {
+            const bar = document.getElementById("status-bar");
+            const text = document.getElementById("status-text");
+            bar.className = "status-bar";
+
+            if (type === "success") {
+                bar.classList.add("success");
+                bar.querySelector(".status-icon").textContent = "✅";
+            } else if (type === "processing") {
+                bar.querySelector(".status-icon").textContent = "⏳";
+            } else if (type === "error") {
+                bar.querySelector(".status-icon").textContent = "❌";
+            } else {
+                bar.querySelector(".status-icon").textContent = "⏳";
+            }
+            text.textContent = message;
+        }
+
+        function resetAll() {
+            if (!confirm("すべてリセットしますか？")) return;
+
+            allScannedTexts = [];
+            patientInfo = { name: "", kana: "", birth: "" };
+            drugList = [];
+
+            document.getElementById("disp-name").textContent = "—";
+            document.getElementById("disp-birth").textContent = "—";
+            document.getElementById("disp-drugs").textContent = "読み取り待機中...";
+            document.getElementById("btn-submit").classList.add("hidden");
+            setStatus("idle", "QRコード待機中");
+
+            if (html5QrCode) stopLiveScanner();
+        }
+
+        function submitToJotForm() {
+            if (!patientInfo.name && drugList.length === 0) {
+                alert("送信するデータがありません");
+                return;
+            }
+
+            const params = new URLSearchParams({
+                name: patientInfo.name,
+                kana: patientInfo.kana,
+                birthdate: patientInfo.birth,
+                prescription: drugList.join("\n")
             });
-            processFinalData(combined);
-        }
 
-        function processFinalData(uint8Array) {
-            // Shift-JISでデコード
-            const decoder = new TextDecoder("shift-jis");
-            const csvText = decoder.decode(uint8Array);
-            
-            // 簡易パースしてJotformへ（報告書 第7章）
-            const formData = simpleParse(csvText);
-            redirectToJotform(formData);
-        }
-
-        function simpleParse(csv) {
-            const lines = csv.split(/\r\n|\n|\r/);
-            let data = { name: "", medications: [] };
-            lines.forEach(line => {
-                const cols = line.split(",");
-                if (cols[0] === "5") data.name = cols[1]; // 氏名
-                if (cols[0] === "211") data.medications.push(cols[3]); // 薬品名
-            });
-            return data;
-        }
-
-        function redirectToJotform(data) {
-            const formID = "YOUR_FORM_ID"; // 本間様のJotform ID
-            const baseUrl = `https://form.jotform.com/${formID}`;
-            const params = new URLSearchParams();
-            params.append("fullName", data.name);
-            params.append("medications", data.medications.join("\n"));
-            window.location.href = `${baseUrl}?${params.toString()}`; // 自動入力遷移
+            const url = `https://form.jotform.com/${JOTFORM_ID}?${params.toString()}`;
+            liff.openWindow({ url, external: false });
         }
     </script>
 </body>
+
 </html>
