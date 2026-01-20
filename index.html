@@ -236,7 +236,7 @@
 <body>
     <div class="container">
         <h1>📋 処方箋受付</h1>
-        <div class="version">Ver 4.1 (JAHIS 対応版)</div>
+        <div class="version">Ver 4.2 (JAHIS 対応版)</div>
 
         <div class="instructions">
             <strong>📸 使い方</strong>
@@ -560,80 +560,7 @@
             return true;
         }
 
-        // --- Core Logic: now handled by handleQrCode (Binary) and handleDetectedText (Native) ---
 
-        // SIMPLE STRATEGY for this "fix":
-        // Accumulate scanned data if it's new. 
-        // Challenge: Knowing when we are done or if it's a duplicate of a specific chunk.
-
-        // Without robust Structured Append metadata from jsQR, we might struggle with strictly ordered connected QRs.
-        // However, many users might just scan single large QRs or we can try to guess.
-        // Let's implement robust Shift-JIS decoding first.
-
-        const rawBytes = code.binaryData;
-
-        // Decode
-        let text = "";
-        try {
-            const decoder = new TextDecoder("shift-jis");
-            text = decoder.decode(rawBytes);
-        } catch (e) {
-            console.error("Decoder error", e);
-            return false;
-        }
-
-        // Simple De-duplication
-        if (rawCsvLines.join("\n").includes(text)) {
-            return false; // Already scanned this part? (Crude)
-        }
-
-        // Heuristic for Connected QR (Primitive):
-        // If the text looks like a CSV fragment, add it.
-        // Ideally we want to detect the Structured Append header, but jsQR hides the bitstream.
-        // Let's assume for now the user scans them.
-        // We will just append the text and try to parse. 
-        // (Note: This is imperfect for binary split midway through multibyte chars, 
-        // but JAHIS usually splits at safe boundaries or we hope TextDecoder handles it gracefully).
-
-        // BETTER APPROACH:
-        // If we assume standard JAHIS, it's CSV.
-        // Let's normalize newlines.
-        const lines = text.split(/\r\n|\n|\r/);
-
-        // Filter empty lines
-        const validLines = lines.filter(l => l.trim().length > 0);
-
-        if (validLines.length === 0) return false;
-
-        // Add to session
-        let newInfoFound = false;
-        validLines.forEach(line => {
-            if (!rawCsvLines.includes(line)) {
-                rawCsvLines.push(line);
-                newInfoFound = true;
-            }
-        });
-
-        if (newInfoFound) {
-            // Feedback
-            if (navigator.vibrate) navigator.vibrate(100);
-            setStatus("success", "QRコードを読み取りました (" + rawCsvLines.length + "行)");
-
-            // Parse accumulated data
-            parseJAHISData(rawCsvLines);
-            updateDisplay();
-
-            // If we found the "1" record and maybe a "5" and "201", we might be good.
-            // But let's let the user decide when to stop or keep scanning.
-            if (scanning) {
-                // Pause briefly
-                setTimeout(() => { setStatus("processing", "次のQRがあればスキャンしてください"); }, 1500);
-            }
-            return true;
-        }
-
-        return false;
-        }
 
         // --- JAHIS CSV Parser ---
         function parseJAHISData(lines) {
