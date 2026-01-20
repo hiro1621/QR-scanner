@@ -67,7 +67,8 @@
             overflow: hidden;
             margin-bottom: 15px;
             position: relative;
-            display: none; /* 初期状態は非表示 */
+            display: none;
+            /* 初期状態は非表示 */
         }
 
         video {
@@ -169,12 +170,15 @@
         .status-bar.success {
             background: #d4edda;
         }
+
         .status-bar.success .status-text {
             color: #155724;
         }
+
         .status-bar.processing {
             background: #fff3cd;
         }
+
         .status-bar.processing .status-text {
             color: #856404;
         }
@@ -219,11 +223,12 @@
 
         #debug-log {
             font-size: 10px;
-            color: rgba(255,255,255,0.5);
+            color: rgba(255, 255, 255, 0.5);
             text-align: left;
             margin-top: 20px;
             white-space: pre-wrap;
-            display: none; /* デバッグ用 */
+            display: none;
+            /* デバッグ用 */
         }
     </style>
 </head>
@@ -301,22 +306,48 @@
         // JAHIS Data State
         // { parity: number, total: number, chunks: { [index]: Uint8Array } }
         let session = null;
-        
+
         let patientInfo = { name: "", kana: "", birth: "" };
         let drugList = [];
         let rawCsvLines = [];
 
+        // --- Debug Logging ---
+        function log(msg) {
+            console.log(msg);
+            const d = document.getElementById("debug-log");
+            if (d) {
+                d.style.display = "block";
+                const t = new Date().toLocaleTimeString();
+                d.textContent = `[${t}] ${msg}\n` + d.textContent;
+            }
+        }
+
         // --- Init ---
         window.onload = () => {
+            log("Initializing...");
             video = document.getElementById("video");
             canvas = document.getElementById("canvas");
             ctx = canvas.getContext("2d", { willReadFrequently: true });
 
+            if (typeof jsQR === 'undefined') {
+                log("Error: jsQR library not loaded. Check internet connection.");
+                alert("エラー: QR解析ライブラリ(jsQR)が読み込まれていません。通信環境を確認してください。");
+                return;
+            } else {
+                log("jsQR library loaded successfully.");
+            }
+
             liff.init({ liffId: MY_LIFF_ID })
                 .then(() => {
-                    if (!liff.isLoggedIn()) liff.login();
+                    log("LIFF Init Success");
+                    if (!liff.isLoggedIn()) {
+                        log("Not logged in, calling login...");
+                        liff.login();
+                    }
                 })
-                .catch(e => console.error("LIFF Init Error:", e));
+                .catch(e => {
+                    log("LIFF Init Error: " + e);
+                });
         };
 
         // --- File Scanning (Photo) ---
@@ -327,16 +358,16 @@
         function processFile(input) {
             if (!input.files || input.files.length === 0) return;
             const file = input.files[0];
-            
+
             setStatus("processing", "解析中...");
-            
+
             const img = new Image();
             img.onload = () => {
                 canvas.width = img.width;
                 canvas.height = img.height;
                 ctx.drawImage(img, 0, 0);
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                
+
                 const code = jsQR(imageData.data, imageData.width, imageData.height);
                 if (code) {
                     handleQrCode(code);
@@ -360,17 +391,26 @@
             document.getElementById("btn-camera").classList.add("hidden");
             document.getElementById("btn-stop").style.display = "flex";
             setStatus("processing", "カメラ起動中...");
+            log("Starting camera...");
 
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "environment" }
                 });
+                log("Camera stream obtained");
                 video.srcObject = stream;
+                // iOS quirk: playsinline is required, sometimes play() needs user interaction or delay
                 video.onloadedmetadata = () => {
-                    video.play();
-                    scanning = true;
-                    requestAnimationFrame(scanLoop);
-                    setStatus("processing", "QRコードを映してください");
+                    log("Video metadata loaded: " + video.videoWidth + "x" + video.videoHeight);
+                    video.play().then(() => {
+                        log("Video playing");
+                        scanning = true;
+                        requestAnimationFrame(scanLoop);
+                        setStatus("processing", "QRコードを映してください");
+                    }).catch(e => {
+                        log("Video play error: " + e);
+                        alert("ビデオの再生に失敗しました: " + e);
+                    });
                 };
             } catch (err) {
                 console.error(err);
@@ -389,7 +429,7 @@
             document.getElementById("btn-photo").classList.remove("hidden");
             document.getElementById("btn-camera").classList.remove("hidden");
             document.getElementById("btn-stop").style.display = "none";
-            
+
             if (session === null) {
                 setStatus("idle", "QRコード待機中");
             }
@@ -402,19 +442,21 @@
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 ctx.drawImage(video, 0, 0);
-                
+
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 const code = jsQR(imageData.data, imageData.width, imageData.height, {
                     inversionAttempts: "dontInvert",
                 });
 
                 if (code) {
+                    log("QR Found: " + code.data.substring(0, 10) + "..."); // Validated
                     const success = handleQrCode(code);
                     if (success && !session) {
-                        // 単体QRなら読み取り後すぐに停止（UX判断）
-                        // 連結QRなら継続
+                        // One-shot success UI handled in handleQrCode
                     }
                 }
+            } else {
+                // log("Waiting for video data..."); // Too verbose
             }
             requestAnimationFrame(scanLoop);
         }
@@ -428,9 +470,9 @@
             // Let's rely on a simpler heuristic:
             // 1. Try to decode as Shift-JIS.
             // 2. Check if valid CSV.
-            
+
             // Note: jsQR exposes `binaryData` (Uint8Array). Use this.
-            
+
             // *** Structured Append Handling ***
             // jsQR does not parse Structured Append headers into easy properties.
             // We have to inspect the raw bytes or use a different strategy.
@@ -439,23 +481,23 @@
             // *However*, strict Structured Append support requires reading the Mode Indicator (0011).
             // jsQR's `binaryData` is the *payload*, i.e., determining the mode happened internally? 
             // Actually jsQR returns the raw payload bytes. 
-            
+
             // Let's try to interpret the binary data as Shift-JIS immediately
             // and see if it looks like a JAHIS fragment.
-            
+
             // JAHIS format usually starts with "1," (Header Record).
             // If it's a 2nd or 3rd QR, it might start mid-stream.
-            
+
             // SIMPLE STRATEGY for this "fix":
             // Accumulate scanned data if it's new. 
             // Challenge: Knowing when we are done or if it's a duplicate of a specific chunk.
-            
+
             // Without robust Structured Append metadata from jsQR, we might struggle with strictly ordered connected QRs.
             // However, many users might just scan single large QRs or we can try to guess.
             // Let's implement robust Shift-JIS decoding first.
 
             const rawBytes = code.binaryData;
-            
+
             // Decode
             let text = "";
             try {
@@ -470,7 +512,7 @@
             if (rawCsvLines.join("\n").includes(text)) {
                 return false; // Already scanned this part? (Crude)
             }
-            
+
             // Heuristic for Connected QR (Primitive):
             // If the text looks like a CSV fragment, add it.
             // Ideally we want to detect the Structured Append header, but jsQR hides the bitstream.
@@ -478,15 +520,15 @@
             // We will just append the text and try to parse. 
             // (Note: This is imperfect for binary split midway through multibyte chars, 
             // but JAHIS usually splits at safe boundaries or we hope TextDecoder handles it gracefully).
-            
+
             // BETTER APPROACH:
             // If we assume standard JAHIS, it's CSV.
             // Let's normalize newlines.
             const lines = text.split(/\r\n|\n|\r/);
-            
+
             // Filter empty lines
             const validLines = lines.filter(l => l.trim().length > 0);
-            
+
             if (validLines.length === 0) return false;
 
             // Add to session
@@ -502,20 +544,20 @@
                 // Feedback
                 if (navigator.vibrate) navigator.vibrate(100);
                 setStatus("success", "QRコードを読み取りました (" + rawCsvLines.length + "行)");
-                
+
                 // Parse accumulated data
                 parseJAHISData(rawCsvLines);
                 updateDisplay();
-                
+
                 // If we found the "1" record and maybe a "5" and "201", we might be good.
                 // But let's let the user decide when to stop or keep scanning.
                 if (scanning) {
-                     // Pause briefly
-                     setTimeout(() => { setStatus("processing", "次のQRがあればスキャンしてください"); }, 1500);
+                    // Pause briefly
+                    setTimeout(() => { setStatus("processing", "次のQRがあればスキャンしてください"); }, 1500);
                 }
                 return true;
             }
-            
+
             return false;
         }
 
@@ -524,7 +566,7 @@
             // Reset
             patientInfo = { name: "", kana: "", birth: "" };
             drugList = [];
-            
+
             // JAHIS Spec:
             // 1: Header
             // 5: Patient Info
@@ -532,14 +574,14 @@
             // 51: Medical Inst
             // 201: Usage (RP)
             // 211: Drug
-            
+
             // Sort lines? No, order matters for 201->211 hierarchy.
             // However, with random scanning order, we might break the hierarchy.
             // Ideally we need the correct order.
             // Assuming the user scans in order 1->2->3 is best effort.
-            
+
             let currentUsage = "";
-            
+
             /* 
               Typical Line: "5,内科 太郎,ﾅｲｶ ﾀﾛｳ,1,19800101,..."
             */
@@ -555,13 +597,13 @@
                     if (cols[2]) patientInfo.kana = cols[2];
                     if (cols[4] && cols[4].length === 8) {
                         const d = cols[4];
-                        patientInfo.birth = `${d.substring(0,4)}/${d.substring(4,6)}/${d.substring(6,8)}`;
+                        patientInfo.birth = `${d.substring(0, 4)}/${d.substring(4, 6)}/${d.substring(6, 8)}`;
                     }
                 }
-                
+
                 // Fallback for older formats or misinterpretation (Record 11 sometimes used in other contexts?)
                 // JAHIS Ver 1.x uses distinct records.
-                
+
                 // 201: Usage (Recipe)
                 // 201,ReceiptNo,UsageName,...
                 if (type === "201") {
@@ -572,7 +614,7 @@
                         currentUsage = cols[2];
                     }
                 }
-                
+
                 // 211: Drug
                 // 211,RP No,DrugCode,DrugName,Amount,Unit,...
                 if (type === "211") {
@@ -580,20 +622,20 @@
                     const name = cols[3] || "不明な薬品";
                     const amount = cols[4] || "";
                     const unit = cols[5] || "";
-                    
+
                     let text = `・${name} ${amount}${unit}`;
                     if (currentUsage) {
                         text += ` (${currentUsage})`;
                     }
                     drugList.push(text);
                 }
-                
+
                 // 111: Comment/Remark (Sometimes used for free text usage)
                 if (type === "111") {
-                   // 111,RemarkCode,RemarkText...
-                   if (cols[2]) {
-                       drugList.push(`  (備考: ${cols[2]})`);
-                   }
+                    // 111,RemarkCode,RemarkText...
+                    if (cols[2]) {
+                        drugList.push(`  (備考: ${cols[2]})`);
+                    }
                 }
             });
         }
@@ -602,7 +644,7 @@
         function updateDisplay() {
             document.getElementById("disp-name").textContent = patientInfo.name || "—";
             document.getElementById("disp-birth").textContent = patientInfo.birth || "—";
-            
+
             if (drugList.length > 0) {
                 document.getElementById("disp-drugs").textContent = drugList.join("\n");
             } else {
@@ -618,7 +660,7 @@
             const bar = document.getElementById("status-bar");
             const text = document.getElementById("status-text");
             const icon = bar.querySelector(".status-icon");
-            
+
             bar.className = "status-bar";
             if (type === "success") {
                 bar.classList.add("success");
@@ -636,17 +678,17 @@
 
         function resetAll() {
             if (!confirm("データをリセットしますか？")) return;
-            
+
             rawCsvLines = [];
             patientInfo = { name: "", kana: "", birth: "" };
             drugList = [];
             session = null;
-            
+
             updateDisplay();
             setStatus("idle", "QRコード待機中");
-            
+
             if (scanning) stopCameraScan();
-            
+
             // Clean URL params if any (optional)
         }
 
@@ -668,11 +710,12 @@
             params.append("source", "line_qr_v4");
 
             const url = `https://form.jotform.com/${JOTFORM_ID}?${params.toString()}`;
-            
+
             // Open in LIFF or External
             liff.openWindow({ url: url, external: false });
         }
-        
+
     </script>
 </body>
+
 </html>
