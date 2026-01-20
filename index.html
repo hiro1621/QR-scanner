@@ -390,31 +390,49 @@
             document.getElementById("btn-photo").classList.add("hidden");
             document.getElementById("btn-camera").classList.add("hidden");
             document.getElementById("btn-stop").style.display = "flex";
-            setStatus("processing", "カメラ起動中...");
-            log("Starting camera...");
+            setStatus("processing", "カメラ起動中(高画質)...");
+            log("Starting camera (1080p)...");
 
             try {
+                // Request High Resolution for dense QR codes
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment" }
+                    video: {
+                        facingMode: "environment",
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        focusMode: "continuous" // Experimental
+                    }
                 });
                 log("Camera stream obtained");
                 video.srcObject = stream;
-                // iOS quirk: playsinline is required, sometimes play() needs user interaction or delay
+
                 video.onloadedmetadata = () => {
-                    log("Video metadata loaded: " + video.videoWidth + "x" + video.videoHeight);
+                    log("Video metadata: " + video.videoWidth + "x" + video.videoHeight);
                     video.play().then(() => {
                         log("Video playing");
                         scanning = true;
+
+                        // Check Native Support
+                        if ('BarcodeDetector' in window) {
+                            log("Native BarcodeDetector available.");
+                            BarcodeDetector.getSupportedFormats().then(formats => {
+                                log("Supported formats: " + formats.join(", "));
+                            });
+                        } else {
+                            log("Native BarcodeDetector NOT available. Using jsQR.");
+                        }
+
                         requestAnimationFrame(scanLoop);
                         setStatus("processing", "QRコードを映してください");
                     }).catch(e => {
                         log("Video play error: " + e);
-                        alert("ビデオの再生に失敗しました: " + e);
+                        alert("ビデオ再生エラー: " + e);
                     });
                 };
             } catch (err) {
                 console.error(err);
-                alert("カメラを起動できませんでした。\nブラウザの権限設定を確認してください。");
+                log("Camera Error: " + err);
+                alert("カメラ起動エラー: " + err);
                 stopCameraScan();
             }
         }
@@ -435,130 +453,186 @@
             }
         }
 
-        function scanLoop() {
+        async function scanLoop() {
             if (!scanning) return;
 
             if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                ctx.drawImage(video, 0, 0);
 
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                    inversionAttempts: "dontInvert",
-                });
-
-                if (code) {
-                    log("QR Found: " + code.data.substring(0, 10) + "..."); // Validated
-                    const success = handleQrCode(code);
-                    if (success && !session) {
-                        // One-shot success UI handled in handleQrCode
+                // 1. Try Native BarcodeDetector (Mainly for Android/macOS/Chrome)
+                // This is much faster and reads dense codes better, BUT returns String (Utf8).
+                // We will try it. If it hits, we use it. 
+                if ('BarcodeDetector' in window) {
+                    try {
+                        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+                        const barcodes = await detector.detect(video);
+                        if (barcodes.length > 0) {
+                            for (const barcode of barcodes) {
+                                log("Native Detect: " + barcode.rawValue);
+                                // Native usually auto-decodes to UTF-8. 
+                                // JAHIS Shift-JIS might become garbled.
+                                // But detection is priority #1.
+                                handleDetectedText(barcode.rawValue);
+                                if (!scanning) return; // Stop if success
+                            }
+                        }
+                    } catch (e) {
+                        // log("Native detection failed: " + e);
                     }
                 }
-            } else {
-                // log("Waiting for video data..."); // Too verbose
+
+                // 2. Fallback to jsQR (Canvas)
+                // Only run if native didn't catch (or running parallel)
+                if (scanning) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0);
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+                    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                        inversionAttempts: "dontInvert",
+                    });
+
+                    if (code) {
+                        log("jsQR Found (Binary)!");
+                        handleQrCode(code); // Calls binary handler
+                    }
+                }
             }
-            requestAnimationFrame(scanLoop);
+            if (scanning) requestAnimationFrame(scanLoop);
         }
 
-        // --- Core Logic: QR Handling & Shift-JIS & Structured Append ---
+        // --- Handlers ---
+
+        // Handler for Text (Native)
+        function handleDetectedText(text) {
+            // De-dupe logic
+            if (rawCsvLines.join("\n").includes(text)) return;
+
+            // If Native detector corrupted Shift-JIS, 'text' might be mojibake.
+            // We can try to guess or just let it pass if detection is the blocker.
+            // User wants reaction first.
+
+            log("Processing Text: " + text.substring(0, 20));
+            if (navigator.vibrate) navigator.vibrate(100);
+
+            // Simple Add
+            const lines = text.split(/\r\n|\n|\r/);
+            const validLines = lines.filter(l => l.trim().length > 0);
+            if (validLines.length > 0) {
+                validLines.forEach(l => {
+                    if (!rawCsvLines.includes(l)) rawCsvLines.push(l);
+                });
+                parseJAHISData(rawCsvLines);
+                updateDisplay();
+                setStatus("success", "読み取り成功 (Native)");
+
+                // Stop or Pause?
+                scanning = false; // Stop for safety to check result
+                setTimeout(() => {
+                    if (confirm("続けてスキャンしますか？")) {
+                        scanning = true;
+                        setStatus("processing", "スキャン中...");
+                        requestAnimationFrame(scanLoop);
+                    } else {
+                        stopCameraScan();
+                    }
+                }, 500);
+            }
+        }
+
+        // Handler for Binary (jsQR)
         function handleQrCode(code) {
-            // Check for Structured Append (jsQR doesn't explicit parse headers well, but let's check chunks)
-            // jsQR returns `chunks` which are the raw blocks. 
-            // However, reliably detecting structured append header in raw bytes is tricky without a dedicated library like ZXing-js.
-            // BUT, JAHIS QRs often put the header in the first byte block.
-            // Let's rely on a simpler heuristic:
-            // 1. Try to decode as Shift-JIS.
-            // 2. Check if valid CSV.
-
-            // Note: jsQR exposes `binaryData` (Uint8Array). Use this.
-
-            // *** Structured Append Handling ***
-            // jsQR does not parse Structured Append headers into easy properties.
-            // We have to inspect the raw bytes or use a different strategy.
-            // Since implementing full BitStream parsing is complex in vanilla JS embedded here,
-            // we will try to infer context or accumulate if we see JAHIS headers.
-            // *However*, strict Structured Append support requires reading the Mode Indicator (0011).
-            // jsQR's `binaryData` is the *payload*, i.e., determining the mode happened internally? 
-            // Actually jsQR returns the raw payload bytes. 
-
-            // Let's try to interpret the binary data as Shift-JIS immediately
-            // and see if it looks like a JAHIS fragment.
-
-            // JAHIS format usually starts with "1," (Header Record).
-            // If it's a 2nd or 3rd QR, it might start mid-stream.
-
-            // SIMPLE STRATEGY for this "fix":
-            // Accumulate scanned data if it's new. 
-            // Challenge: Knowing when we are done or if it's a duplicate of a specific chunk.
-
-            // Without robust Structured Append metadata from jsQR, we might struggle with strictly ordered connected QRs.
-            // However, many users might just scan single large QRs or we can try to guess.
-            // Let's implement robust Shift-JIS decoding first.
-
             const rawBytes = code.binaryData;
-
-            // Decode
             let text = "";
             try {
                 const decoder = new TextDecoder("shift-jis");
                 text = decoder.decode(rawBytes);
             } catch (e) {
-                console.error("Decoder error", e);
+                log("Decoder error: " + e);
                 return false;
             }
 
-            // Simple De-duplication
-            if (rawCsvLines.join("\n").includes(text)) {
-                return false; // Already scanned this part? (Crude)
-            }
+            // Logic similar to text handler...
+            if (rawCsvLines.join("\n").includes(text)) return false;
 
-            // Heuristic for Connected QR (Primitive):
-            // If the text looks like a CSV fragment, add it.
-            // Ideally we want to detect the Structured Append header, but jsQR hides the bitstream.
-            // Let's assume for now the user scans them.
-            // We will just append the text and try to parse. 
-            // (Note: This is imperfect for binary split midway through multibyte chars, 
-            // but JAHIS usually splits at safe boundaries or we hope TextDecoder handles it gracefully).
+            log("jsQR Decoded: " + text.substring(0, 20));
+            handleDetectedText(text); // Reuse text handler
+            return true;
+        }
 
-            // BETTER APPROACH:
-            // If we assume standard JAHIS, it's CSV.
-            // Let's normalize newlines.
-            const lines = text.split(/\r\n|\n|\r/);
+        // --- Core Logic: now handled by handleQrCode (Binary) and handleDetectedText (Native) ---
 
-            // Filter empty lines
-            const validLines = lines.filter(l => l.trim().length > 0);
+        // SIMPLE STRATEGY for this "fix":
+        // Accumulate scanned data if it's new. 
+        // Challenge: Knowing when we are done or if it's a duplicate of a specific chunk.
 
-            if (validLines.length === 0) return false;
+        // Without robust Structured Append metadata from jsQR, we might struggle with strictly ordered connected QRs.
+        // However, many users might just scan single large QRs or we can try to guess.
+        // Let's implement robust Shift-JIS decoding first.
 
-            // Add to session
-            let newInfoFound = false;
-            validLines.forEach(line => {
-                if (!rawCsvLines.includes(line)) {
-                    rawCsvLines.push(line);
-                    newInfoFound = true;
-                }
-            });
+        const rawBytes = code.binaryData;
 
-            if (newInfoFound) {
-                // Feedback
-                if (navigator.vibrate) navigator.vibrate(100);
-                setStatus("success", "QRコードを読み取りました (" + rawCsvLines.length + "行)");
-
-                // Parse accumulated data
-                parseJAHISData(rawCsvLines);
-                updateDisplay();
-
-                // If we found the "1" record and maybe a "5" and "201", we might be good.
-                // But let's let the user decide when to stop or keep scanning.
-                if (scanning) {
-                    // Pause briefly
-                    setTimeout(() => { setStatus("processing", "次のQRがあればスキャンしてください"); }, 1500);
-                }
-                return true;
-            }
-
+        // Decode
+        let text = "";
+        try {
+            const decoder = new TextDecoder("shift-jis");
+            text = decoder.decode(rawBytes);
+        } catch (e) {
+            console.error("Decoder error", e);
             return false;
+        }
+
+        // Simple De-duplication
+        if (rawCsvLines.join("\n").includes(text)) {
+            return false; // Already scanned this part? (Crude)
+        }
+
+        // Heuristic for Connected QR (Primitive):
+        // If the text looks like a CSV fragment, add it.
+        // Ideally we want to detect the Structured Append header, but jsQR hides the bitstream.
+        // Let's assume for now the user scans them.
+        // We will just append the text and try to parse. 
+        // (Note: This is imperfect for binary split midway through multibyte chars, 
+        // but JAHIS usually splits at safe boundaries or we hope TextDecoder handles it gracefully).
+
+        // BETTER APPROACH:
+        // If we assume standard JAHIS, it's CSV.
+        // Let's normalize newlines.
+        const lines = text.split(/\r\n|\n|\r/);
+
+        // Filter empty lines
+        const validLines = lines.filter(l => l.trim().length > 0);
+
+        if (validLines.length === 0) return false;
+
+        // Add to session
+        let newInfoFound = false;
+        validLines.forEach(line => {
+            if (!rawCsvLines.includes(line)) {
+                rawCsvLines.push(line);
+                newInfoFound = true;
+            }
+        });
+
+        if (newInfoFound) {
+            // Feedback
+            if (navigator.vibrate) navigator.vibrate(100);
+            setStatus("success", "QRコードを読み取りました (" + rawCsvLines.length + "行)");
+
+            // Parse accumulated data
+            parseJAHISData(rawCsvLines);
+            updateDisplay();
+
+            // If we found the "1" record and maybe a "5" and "201", we might be good.
+            // But let's let the user decide when to stop or keep scanning.
+            if (scanning) {
+                // Pause briefly
+                setTimeout(() => { setStatus("processing", "次のQRがあればスキャンしてください"); }, 1500);
+            }
+            return true;
+        }
+
+        return false;
         }
 
         // --- JAHIS CSV Parser ---
