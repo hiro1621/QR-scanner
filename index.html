@@ -4,9 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>処方箋QRスキャナー Ver 4.6</title>
-    <!-- ZXing Library - More robust for dense QR codes -->
-    <script src="https://unpkg.com/@aspect14/barcode-reader@1.0.5/umd/index.min.js"></script>
+    <title>処方箋QRスキャナー Ver 4.8</title>
     <style>
         * {
             box-sizing: border-box;
@@ -15,7 +13,7 @@
         }
 
         body {
-            font-family: sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             background: #1a1a2e;
             color: #fff;
             min-height: 100vh;
@@ -31,7 +29,7 @@
             border-bottom: 2px solid #0f3460;
         }
 
-        #camera-box {
+        #camera-container {
             flex: 1;
             position: relative;
             background: #000;
@@ -47,7 +45,7 @@
             object-fit: cover;
         }
 
-        #guide-box {
+        #guide {
             position: absolute;
             width: 80%;
             height: 60%;
@@ -61,14 +59,15 @@
             background: #fff;
             color: #333;
             padding: 15px;
-            max-height: 40vh;
+            max-height: 45vh;
             overflow-y: auto;
         }
 
         #status {
             font-weight: bold;
             padding: 10px;
-            background: #eee;
+            background: #fff3cd;
+            color: #856404;
             border-radius: 8px;
             margin-bottom: 10px;
             display: flex;
@@ -86,11 +85,6 @@
             color: #721c24;
         }
 
-        #status.scanning {
-            background: #fff3cd;
-            color: #856404;
-        }
-
         #output {
             background: #f5f5f5;
             border: 1px solid #ddd;
@@ -98,21 +92,21 @@
             font-family: monospace;
             font-size: 11px;
             white-space: pre-wrap;
-            max-height: 150px;
+            max-height: 180px;
             overflow-y: auto;
             border-radius: 8px;
         }
 
-        #debug-log {
-            margin-top: 10px;
-            background: #333;
+        #debug {
+            margin-top: 8px;
+            background: #222;
             color: #0f0;
-            padding: 10px;
+            padding: 8px;
             font-family: monospace;
-            font-size: 10px;
-            max-height: 100px;
+            font-size: 9px;
+            max-height: 80px;
             overflow-y: auto;
-            border-radius: 8px;
+            border-radius: 4px;
         }
 
         button {
@@ -131,67 +125,88 @@
         button:active {
             opacity: 0.8;
         }
+
+        button:disabled {
+            background: #ccc;
+        }
+
+        .btn-green {
+            background: #28a745 !important;
+        }
     </style>
 </head>
 
 <body>
-    <header>📋 処方箋QRスキャナー Ver 4.6 (ZXing版)</header>
+    <header>📋 処方箋QRスキャナー Ver 4.8 (ZXing版)</header>
 
-    <div id="camera-box">
+    <div id="camera-container">
         <video id="video" autoplay playsinline muted></video>
-        <div id="guide-box"></div>
+        <div id="guide"></div>
     </div>
 
     <div id="result-panel">
-        <div id="status" class="scanning">
-            <span>📷</span>
-            <span id="status-text">初期化中...</span>
+        <div id="status">
+            <span id="status-icon">⏳</span>
+            <span id="status-text">ライブラリ読込中...</span>
         </div>
         <div id="output">ここに読み取り結果が表示されます</div>
-        <div id="debug-log">[ログ] 起動中...</div>
+        <div id="debug">[ログ]</div>
         <button id="btn-reset" onclick="resetScan()">🔄 もう一度スキャン</button>
     </div>
 
     <canvas id="canvas" hidden></canvas>
 
-    <script>
+    <!-- ZXing-WASM via ESM -->
+    <script type="module">
+        import { readBarcodes, setZXingModuleOverrides } from 'https://cdn.jsdelivr.net/npm/zxing-wasm@1.2.15/+esm';
+
+        // Set WASM path
+        setZXingModuleOverrides({
+            locateFile: (path, prefix) => {
+                if (path.endsWith('.wasm')) {
+                    return `https://cdn.jsdelivr.net/npm/zxing-wasm@1.2.15/dist/${path}`;
+                }
+                return prefix + path;
+            }
+        });
+
         // Elements
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         const statusEl = document.getElementById('status');
+        const statusIcon = document.getElementById('status-icon');
         const statusText = document.getElementById('status-text');
         const outputEl = document.getElementById('output');
-        const debugLog = document.getElementById('debug-log');
+        const debugEl = document.getElementById('debug');
+        const btnReset = document.getElementById('btn-reset');
 
         let scanning = false;
         let stream = null;
-        let reader = null;
+        let scanInterval = null;
 
-        // Debug Logger
+        // Logger
         function log(msg) {
-            const time = new Date().toLocaleTimeString();
-            const line = `[${time}] ${msg}`;
-            console.log(line);
-            debugLog.textContent = line + '\n' + debugLog.textContent;
+            const t = new Date().toLocaleTimeString();
+            console.log(`[${t}] ${msg}`);
+            debugEl.textContent = `[${t}] ${msg}\n` + debugEl.textContent;
         }
 
-        // Status Update
+        // Status
         function setStatus(type, msg) {
-            statusEl.className = 'status ' + type;
+            statusEl.className = type;
             statusText.textContent = msg;
-            if (type === 'success') statusEl.querySelector('span').textContent = '✅';
-            else if (type === 'error') statusEl.querySelector('span').textContent = '❌';
-            else if (type === 'scanning') statusEl.querySelector('span').textContent = '📷';
+            if (type === 'success') statusIcon.textContent = '✅';
+            else if (type === 'error') statusIcon.textContent = '❌';
+            else statusIcon.textContent = '📷';
         }
 
-        // Initialize Camera
+        // Start Camera
         async function startCamera() {
-            log('カメラ起動を試行...');
-            setStatus('scanning', 'カメラ起動中...');
+            log('カメラ起動中...');
+            setStatus('', 'カメラ起動中...');
 
             try {
-                // Request high resolution for dense QR
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: { ideal: 'environment' },
@@ -206,130 +221,72 @@
                 video.onloadedmetadata = () => {
                     log(`カメラ解像度: ${video.videoWidth}x${video.videoHeight}`);
                     video.play();
-                    initReader();
+                    startScanning();
                 };
 
             } catch (err) {
-                log('カメラエラー: ' + err.name + ' - ' + err.message);
-                setStatus('error', 'カメラ起動失敗: ' + err.name);
-                alert('カメラを起動できませんでした。\n権限を許可してください。\n\nエラー: ' + err.message);
+                log('カメラエラー: ' + err.message);
+                setStatus('error', 'カメラ起動失敗');
+                alert('カメラを起動できませんでした。\n権限を確認してください。\n\n' + err.message);
             }
         }
 
-        // Initialize ZXing Reader
-        function initReader() {
-            log('ZXingリーダー初期化...');
+        // Start Scanning Loop
+        function startScanning() {
+            scanning = true;
+            setStatus('', 'QRコードを枠内に映してください');
+            log('スキャン開始');
 
-            if (typeof BarcodeReader === 'undefined') {
-                log('ERROR: BarcodeReader ライブラリが読み込まれていません');
-                setStatus('error', 'ライブラリ読込失敗');
-                // Fallback to manual canvas scanning
-                log('フォールバック: 手動キャンバススキャン開始');
-                scanning = true;
-                setStatus('scanning', 'スキャン中 (フォールバック)...');
-                requestAnimationFrame(manualScanLoop);
-                return;
-            }
+            // Use setInterval for more controlled timing
+            scanInterval = setInterval(scanFrame, 200); // 5 FPS
+        }
+
+        // Scan Single Frame
+        async function scanFrame() {
+            if (!scanning) return;
+            if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
             try {
-                reader = new BarcodeReader();
-                log('BarcodeReader 初期化完了');
-                scanning = true;
-                setStatus('scanning', 'QRコードを枠内に映してください');
-                requestAnimationFrame(scanLoop);
+                // Capture frame
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+                // ZXing scan
+                const results = await readBarcodes(imageData, {
+                    formats: ['QRCode'],
+                    tryHarder: true,
+                    tryRotate: true,
+                    tryInvert: false,
+                    tryDownscale: true,
+                    maxNumberOfSymbols: 1
+                });
+
+                if (results.length > 0) {
+                    handleSuccess(results[0]);
+                }
             } catch (e) {
-                log('Reader初期化エラー: ' + e);
-                setStatus('error', 'リーダー初期化失敗');
+                // Ignore scan errors (no QR found is normal)
             }
         }
 
-        // ZXing Scan Loop
-        async function scanLoop() {
-            if (!scanning) return;
-
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                ctx.drawImage(video, 0, 0);
-
-                try {
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    const result = reader.decode(imageData);
-
-                    if (result) {
-                        handleSuccess(result);
-                        return;
-                    }
-                } catch (e) {
-                    // No QR found - this is normal, keep scanning
-                }
-            }
-
-            if (scanning) {
-                requestAnimationFrame(scanLoop);
-            }
-        }
-
-        // Fallback: Manual canvas with simpler approach
-        async function manualScanLoop() {
-            if (!scanning) return;
-
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                ctx.drawImage(video, 0, 0);
-
-                // Try using jsQR as backup
-                if (typeof jsQR !== 'undefined') {
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    const code = jsQR(imageData.data, imageData.width, imageData.height);
-                    if (code) {
-                        handleSuccessJsQR(code);
-                        return;
-                    }
-                }
-            }
-
-            if (scanning) {
-                requestAnimationFrame(manualScanLoop);
-            }
-        }
-
-        // Handle Success (ZXing)
+        // Handle Success
         function handleSuccess(result) {
             scanning = false;
-            log('読み取り成功! タイプ: ' + result.format);
+            if (scanInterval) clearInterval(scanInterval);
 
-            let text = result.text || '';
+            log('QRコード検出！');
+            log('形式: ' + result.format);
 
-            // Try Shift-JIS decode if it looks binary/garbled
-            if (result.rawBytes && result.rawBytes.length > 0) {
-                try {
-                    const decoder = new TextDecoder('shift-jis');
-                    text = decoder.decode(new Uint8Array(result.rawBytes));
-                    log('Shift-JIS デコード適用');
-                } catch (e) {
-                    log('Shift-JISデコード失敗、元テキスト使用');
-                }
-            }
+            const text = result.text;
 
-            setStatus('success', '読み取り成功！');
-            outputEl.textContent = text;
-
-            if (navigator.vibrate) navigator.vibrate(200);
-        }
-
-        // Handle Success (jsQR fallback)
-        function handleSuccessJsQR(code) {
-            scanning = false;
-            log('jsQR読み取り成功!');
-
-            let text = '';
-            try {
-                const decoder = new TextDecoder('shift-jis');
-                text = decoder.decode(new Uint8Array(code.binaryData));
-            } catch (e) {
-                text = code.data || 'デコード失敗';
+            // Validate JAHIS
+            if (text.startsWith('JAHIS')) {
+                log('JAHIS形式を確認');
+            } else {
+                log('注意: JAHIS形式ではない可能性');
             }
 
             setStatus('success', '読み取り成功！');
@@ -340,39 +297,37 @@
 
         // Reset
         function resetScan() {
-            log('リセット...');
+            log('リセット');
+            outputEl.textContent = 'スキャン中...';
+            setStatus('', 'QRコードを枠内に映してください');
             scanning = true;
-            outputEl.textContent = 'スキャン待機中...';
-            setStatus('scanning', 'QRコードを枠内に映してください');
-
-            if (reader) {
-                requestAnimationFrame(scanLoop);
-            } else {
-                requestAnimationFrame(manualScanLoop);
-            }
+            scanInterval = setInterval(scanFrame, 200);
         }
 
-        // Stop Camera (cleanup)
+        // Make resetScan global
+        window.resetScan = resetScan;
+
+        // Stop Camera
         function stopCamera() {
             scanning = false;
+            if (scanInterval) clearInterval(scanInterval);
             if (stream) {
                 stream.getTracks().forEach(t => t.stop());
-                stream = null;
             }
         }
 
         // Init
-        window.onload = () => {
-            log('アプリ起動');
+        log('アプリ起動');
+        log('ZXing-WASM ライブラリ読込中...');
 
-            // Also load jsQR as fallback
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
-            script.onload = () => log('jsQR フォールバックライブラリ読込完了');
-            document.head.appendChild(script);
-
+        // Test that the library loaded
+        try {
+            log('ZXing-WASM 読込完了');
             startCamera();
-        };
+        } catch (e) {
+            log('ライブラリエラー: ' + e);
+            setStatus('error', 'ライブラリ読込失敗');
+        }
 
         window.onbeforeunload = stopCamera;
     </script>
