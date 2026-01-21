@@ -236,7 +236,7 @@
 <body>
     <div class="container">
         <h1>📋 処方箋受付</h1>
-        <div class="version">Ver 4.3 (JAHIS 対応版)</div>
+        <div class="version">Ver 4.4 (JAHIS 対応版)</div>
 
         <div class="instructions">
             <strong>📸 使い方</strong>
@@ -461,6 +461,8 @@
                 // 1. Try Native BarcodeDetector (Mainly for Android/macOS/Chrome)
                 // This is much faster and reads dense codes better, BUT returns String (Utf8).
                 // We will try it. If it hits, we use it. 
+                /* 
+                // Native BarcodeDetector causes Mojibake for Shift-JIS. Disabled for JAHIS.
                 if ('BarcodeDetector' in window) {
                     try {
                         const detector = new BarcodeDetector({ formats: ['qr_code'] });
@@ -479,6 +481,7 @@
                         // log("Native detection failed: " + e);
                     }
                 }
+                */
 
                 // 2. Fallback to jsQR (Canvas)
                 // Only run if native didn't catch (or running parallel)
