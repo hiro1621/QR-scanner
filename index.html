@@ -546,7 +546,7 @@
             let text = "";
             try {
                 const decoder = new TextDecoder("shift-jis");
-                text = decoder.decode(rawBytes);
+                text = decoder.decode(new Uint8Array(rawBytes));
             } catch (e) {
                 log("Decoder error: " + e);
                 return false;
