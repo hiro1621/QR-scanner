@@ -4,7 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>処方箋QRスキャナー Ver 4.8</title>
+    <title>処方箋QRスキャナー Ver 5.0</title>
+    <!-- Bundled ZXing-WASM (tested and working!) -->
+    <script src="zxing-bundle.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -127,17 +129,13 @@
         }
 
         button:disabled {
-            background: #ccc;
-        }
-
-        .btn-green {
-            background: #28a745 !important;
+            background: #999;
         }
     </style>
 </head>
 
 <body>
-    <header>📋 処方箋QRスキャナー Ver 4.8 (ZXing版)</header>
+    <header>📋 処方箋QRスキャナー Ver 5.0 (検証済みZXing)</header>
 
     <div id="camera-container">
         <video id="video" autoplay playsinline muted></video>
@@ -147,7 +145,7 @@
     <div id="result-panel">
         <div id="status">
             <span id="status-icon">⏳</span>
-            <span id="status-text">ライブラリ読込中...</span>
+            <span id="status-text">初期化中...</span>
         </div>
         <div id="output">ここに読み取り結果が表示されます</div>
         <div id="debug">[ログ]</div>
@@ -156,21 +154,7 @@
 
     <canvas id="canvas" hidden></canvas>
 
-    <!-- ZXing-WASM via ESM -->
-    <script type="module">
-        import { readBarcodes, setZXingModuleOverrides } from 'https://cdn.jsdelivr.net/npm/zxing-wasm@1.2.15/+esm';
-
-        // Set WASM path
-        setZXingModuleOverrides({
-            locateFile: (path, prefix) => {
-                if (path.endsWith('.wasm')) {
-                    return `https://cdn.jsdelivr.net/npm/zxing-wasm@1.2.15/dist/${path}`;
-                }
-                return prefix + path;
-            }
-        });
-
-        // Elements
+    <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -185,14 +169,12 @@
         let stream = null;
         let scanInterval = null;
 
-        // Logger
         function log(msg) {
             const t = new Date().toLocaleTimeString();
             console.log(`[${t}] ${msg}`);
             debugEl.textContent = `[${t}] ${msg}\n` + debugEl.textContent;
         }
 
-        // Status
         function setStatus(type, msg) {
             statusEl.className = type;
             statusText.textContent = msg;
@@ -201,7 +183,6 @@
             else statusIcon.textContent = '📷';
         }
 
-        // Start Camera
         async function startCamera() {
             log('カメラ起動中...');
             setStatus('', 'カメラ起動中...');
@@ -219,7 +200,7 @@
                 video.srcObject = stream;
 
                 video.onloadedmetadata = () => {
-                    log(`カメラ解像度: ${video.videoWidth}x${video.videoHeight}`);
+                    log(`解像度: ${video.videoWidth}x${video.videoHeight}`);
                     video.play();
                     startScanning();
                 };
@@ -227,35 +208,29 @@
             } catch (err) {
                 log('カメラエラー: ' + err.message);
                 setStatus('error', 'カメラ起動失敗');
-                alert('カメラを起動できませんでした。\n権限を確認してください。\n\n' + err.message);
+                alert('カメラを起動できませんでした。\n' + err.message);
             }
         }
 
-        // Start Scanning Loop
         function startScanning() {
             scanning = true;
             setStatus('', 'QRコードを枠内に映してください');
             log('スキャン開始');
-
-            // Use setInterval for more controlled timing
-            scanInterval = setInterval(scanFrame, 200); // 5 FPS
+            scanInterval = setInterval(scanFrame, 250);
         }
 
-        // Scan Single Frame
         async function scanFrame() {
             if (!scanning) return;
             if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
             try {
-                // Capture frame
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 ctx.drawImage(video, 0, 0);
 
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-                // ZXing scan
-                const results = await readBarcodes(imageData, {
+                const results = await window.ZXingScanner.readBarcodes(imageData, {
                     formats: ['QRCode'],
                     tryHarder: true,
                     tryRotate: true,
@@ -268,23 +243,20 @@
                     handleSuccess(results[0]);
                 }
             } catch (e) {
-                // Ignore scan errors (no QR found is normal)
+                // No QR - normal
             }
         }
 
-        // Handle Success
         function handleSuccess(result) {
             scanning = false;
             if (scanInterval) clearInterval(scanInterval);
 
             log('QRコード検出！');
-            log('形式: ' + result.format);
 
             const text = result.text;
 
-            // Validate JAHIS
             if (text.startsWith('JAHIS')) {
-                log('JAHIS形式を確認');
+                log('JAHIS形式確認OK');
             } else {
                 log('注意: JAHIS形式ではない可能性');
             }
@@ -295,19 +267,14 @@
             if (navigator.vibrate) navigator.vibrate(200);
         }
 
-        // Reset
         function resetScan() {
             log('リセット');
             outputEl.textContent = 'スキャン中...';
             setStatus('', 'QRコードを枠内に映してください');
             scanning = true;
-            scanInterval = setInterval(scanFrame, 200);
+            scanInterval = setInterval(scanFrame, 250);
         }
 
-        // Make resetScan global
-        window.resetScan = resetScan;
-
-        // Stop Camera
         function stopCamera() {
             scanning = false;
             if (scanInterval) clearInterval(scanInterval);
@@ -317,17 +284,19 @@
         }
 
         // Init
-        log('アプリ起動');
-        log('ZXing-WASM ライブラリ読込中...');
+        window.onload = () => {
+            log('アプリ起動');
 
-        // Test that the library loaded
-        try {
-            log('ZXing-WASM 読込完了');
+            if (typeof window.ZXingScanner === 'undefined' || !window.ZXingScanner.readBarcodes) {
+                log('FATAL: ZXingScanner なし');
+                setStatus('error', 'ライブラリ読込失敗');
+                alert('ZXingライブラリの読み込みに失敗しました。\nzxing-bundle.js を配置してください。');
+                return;
+            }
+
+            log('ZXingScanner 読込OK');
             startCamera();
-        } catch (e) {
-            log('ライブラリエラー: ' + e);
-            setStatus('error', 'ライブラリ読込失敗');
-        }
+        };
 
         window.onbeforeunload = stopCamera;
     </script>
