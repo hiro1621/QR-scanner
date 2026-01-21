@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>処方箋QRスキャナー Ver 5.1</title>
+    <title>処方箋QRスキャナー Ver 5.2</title>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         * {
@@ -32,7 +32,7 @@
         #reader {
             width: 100%;
             flex: 1;
-            min-height: 350px;
+            min-height: 400px;
             background: #000;
         }
 
@@ -40,7 +40,7 @@
             background: #fff;
             color: #333;
             padding: 12px;
-            max-height: 40vh;
+            max-height: 35vh;
             overflow-y: auto;
         }
 
@@ -70,7 +70,7 @@
             font-family: monospace;
             font-size: 10px;
             white-space: pre-wrap;
-            max-height: 120px;
+            max-height: 100px;
             overflow-y: auto;
             border-radius: 8px;
         }
@@ -82,7 +82,7 @@
             padding: 6px;
             font-family: monospace;
             font-size: 9px;
-            max-height: 100px;
+            max-height: 80px;
             overflow-y: auto;
             border-radius: 4px;
         }
@@ -102,7 +102,7 @@
 </head>
 
 <body>
-    <header>📋 処方箋QRスキャナー Ver 5.1 (ネイティブ検出テスト)</header>
+    <header>📋 処方箋QRスキャナー Ver 5.2 (フルスキャン)</header>
     <div id="reader"></div>
     <div id="result-panel">
         <div id="status">📷 初期化中...</div>
@@ -129,43 +129,35 @@
             statusEl.textContent = msg;
         }
 
-        // 成功時
         function onScanSuccess(decodedText, decodedResult) {
             log('検出成功！');
-            log('形式: ' + (decodedResult.result.format?.formatName || 'QR'));
-
             stopScan();
-
             setStatus('success', '✅ 読み取り成功！');
             outputEl.textContent = decodedText;
 
-            // JAHIS判定
             if (decodedText.startsWith('JAHIS')) {
                 log('JAHIS形式OK');
-            } else {
-                log('注意: JAHIS形式ではないかも');
             }
 
             if (navigator.vibrate) navigator.vibrate(200);
         }
 
-        // エラー時（QR見つからない = 正常なので無視）
         function onScanError(err) {
-            // 何もしない
+            // QR見つからない = 正常
         }
 
         async function startScan() {
             log('スキャン開始...');
-            setStatus('', '📷 QRコードを映してください');
+            setStatus('', '📷 QRコードを画面全体に映してください');
 
             try {
-                // ネイティブBarcodeDetectorを使う設定
                 await html5QrCode.start(
                     { facingMode: "environment" },
                     {
-                        fps: 10,
-                        qrbox: { width: 280, height: 280 },
-                        // ネイティブ検出を有効化（お薬手帳アプリと同じ方式）
+                        fps: 15,
+                        // 枠を取り払い、画面全体でスキャン
+                        qrbox: undefined,
+                        aspectRatio: 1.0,
                         experimentalFeatures: {
                             useBarCodeDetectorIfSupported: true
                         }
@@ -175,18 +167,15 @@
                 );
                 isScanning = true;
 
-                // ネイティブ検出が使えるかチェック
                 if ('BarcodeDetector' in window) {
-                    log('ネイティブBarcodeDetector: 利用可能');
+                    log('ネイティブBarcodeDetector: ON');
                 } else {
-                    log('ネイティブBarcodeDetector: 利用不可（jsQRフォールバック）');
+                    log('ネイティブ: OFF (jsQRフォールバック)');
                 }
-
-                log('カメラ起動OK');
+                log('カメラ起動OK - 枠なしフルスキャン');
             } catch (err) {
                 log('カメラエラー: ' + err);
                 setStatus('error', '❌ カメラ起動失敗');
-                alert('カメラ起動失敗:\n' + err);
             }
         }
 
@@ -214,7 +203,7 @@
                 return;
             }
 
-            log('Html5Qrcode 読込OK');
+            log('Html5Qrcode OK');
             html5QrCode = new Html5Qrcode("reader");
             await startScan();
         };
