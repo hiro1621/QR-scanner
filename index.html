@@ -4,9 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>処方箋QRスキャナー Ver 5.0</title>
-    <!-- Bundled ZXing-WASM (tested and working!) -->
-    <script src="zxing-bundle.js"></script>
+    <title>処方箋QRスキャナー Ver 5.1</title>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -25,43 +24,23 @@
 
         header {
             background: #16213e;
-            padding: 12px;
+            padding: 10px;
             text-align: center;
-            font-size: 14px;
-            border-bottom: 2px solid #0f3460;
+            font-size: 13px;
         }
 
-        #camera-container {
-            flex: 1;
-            position: relative;
-            background: #000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 300px;
-        }
-
-        video {
+        #reader {
             width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        #guide {
-            position: absolute;
-            width: 80%;
-            height: 60%;
-            border: 3px solid #00ff88;
-            border-radius: 12px;
-            pointer-events: none;
-            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+            flex: 1;
+            min-height: 350px;
+            background: #000;
         }
 
         #result-panel {
             background: #fff;
             color: #333;
-            padding: 15px;
-            max-height: 45vh;
+            padding: 12px;
+            max-height: 40vh;
             overflow-y: auto;
         }
 
@@ -71,10 +50,7 @@
             background: #fff3cd;
             color: #856404;
             border-radius: 8px;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            margin-bottom: 8px;
         }
 
         #status.success {
@@ -92,82 +68,55 @@
             border: 1px solid #ddd;
             padding: 10px;
             font-family: monospace;
-            font-size: 11px;
+            font-size: 10px;
             white-space: pre-wrap;
-            max-height: 180px;
+            max-height: 120px;
             overflow-y: auto;
             border-radius: 8px;
         }
 
         #debug {
-            margin-top: 8px;
+            margin-top: 6px;
             background: #222;
             color: #0f0;
-            padding: 8px;
+            padding: 6px;
             font-family: monospace;
             font-size: 9px;
-            max-height: 80px;
+            max-height: 100px;
             overflow-y: auto;
             border-radius: 4px;
         }
 
         button {
-            margin-top: 10px;
-            padding: 14px;
+            margin-top: 8px;
+            padding: 12px;
             background: linear-gradient(135deg, #667eea, #764ba2);
             color: #fff;
             border: none;
             border-radius: 8px;
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             width: 100%;
-            cursor: pointer;
-        }
-
-        button:active {
-            opacity: 0.8;
-        }
-
-        button:disabled {
-            background: #999;
         }
     </style>
 </head>
 
 <body>
-    <header>📋 処方箋QRスキャナー Ver 5.0 (検証済みZXing)</header>
-
-    <div id="camera-container">
-        <video id="video" autoplay playsinline muted></video>
-        <div id="guide"></div>
-    </div>
-
+    <header>📋 処方箋QRスキャナー Ver 5.1 (ネイティブ検出テスト)</header>
+    <div id="reader"></div>
     <div id="result-panel">
-        <div id="status">
-            <span id="status-icon">⏳</span>
-            <span id="status-text">初期化中...</span>
-        </div>
-        <div id="output">ここに読み取り結果が表示されます</div>
+        <div id="status">📷 初期化中...</div>
+        <div id="output">ここに結果が表示されます</div>
         <div id="debug">[ログ]</div>
-        <button id="btn-reset" onclick="resetScan()">🔄 もう一度スキャン</button>
+        <button onclick="resetScan()">🔄 もう一度スキャン</button>
     </div>
-
-    <canvas id="canvas" hidden></canvas>
 
     <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         const statusEl = document.getElementById('status');
-        const statusIcon = document.getElementById('status-icon');
-        const statusText = document.getElementById('status-text');
         const outputEl = document.getElementById('output');
         const debugEl = document.getElementById('debug');
-        const btnReset = document.getElementById('btn-reset');
-
-        let scanning = false;
-        let stream = null;
-        let scanInterval = null;
+        let html5QrCode = null;
+        let isScanning = false;
 
         function log(msg) {
             const t = new Date().toLocaleTimeString();
@@ -177,128 +126,98 @@
 
         function setStatus(type, msg) {
             statusEl.className = type;
-            statusText.textContent = msg;
-            if (type === 'success') statusIcon.textContent = '✅';
-            else if (type === 'error') statusIcon.textContent = '❌';
-            else statusIcon.textContent = '📷';
+            statusEl.textContent = msg;
         }
 
-        async function startCamera() {
-            log('カメラ起動中...');
-            setStatus('', 'カメラ起動中...');
+        // 成功時
+        function onScanSuccess(decodedText, decodedResult) {
+            log('検出成功！');
+            log('形式: ' + (decodedResult.result.format?.formatName || 'QR'));
 
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: { ideal: 'environment' },
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
-                    },
-                    audio: false
-                });
+            stopScan();
 
-                video.srcObject = stream;
+            setStatus('success', '✅ 読み取り成功！');
+            outputEl.textContent = decodedText;
 
-                video.onloadedmetadata = () => {
-                    log(`解像度: ${video.videoWidth}x${video.videoHeight}`);
-                    video.play();
-                    startScanning();
-                };
-
-            } catch (err) {
-                log('カメラエラー: ' + err.message);
-                setStatus('error', 'カメラ起動失敗');
-                alert('カメラを起動できませんでした。\n' + err.message);
-            }
-        }
-
-        function startScanning() {
-            scanning = true;
-            setStatus('', 'QRコードを枠内に映してください');
-            log('スキャン開始');
-            scanInterval = setInterval(scanFrame, 250);
-        }
-
-        async function scanFrame() {
-            if (!scanning) return;
-            if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
-
-            try {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                ctx.drawImage(video, 0, 0);
-
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-                const results = await window.ZXingScanner.readBarcodes(imageData, {
-                    formats: ['QRCode'],
-                    tryHarder: true,
-                    tryRotate: true,
-                    tryInvert: false,
-                    tryDownscale: true,
-                    maxNumberOfSymbols: 1
-                });
-
-                if (results.length > 0) {
-                    handleSuccess(results[0]);
-                }
-            } catch (e) {
-                // No QR - normal
-            }
-        }
-
-        function handleSuccess(result) {
-            scanning = false;
-            if (scanInterval) clearInterval(scanInterval);
-
-            log('QRコード検出！');
-
-            const text = result.text;
-
-            if (text.startsWith('JAHIS')) {
-                log('JAHIS形式確認OK');
+            // JAHIS判定
+            if (decodedText.startsWith('JAHIS')) {
+                log('JAHIS形式OK');
             } else {
-                log('注意: JAHIS形式ではない可能性');
+                log('注意: JAHIS形式ではないかも');
             }
-
-            setStatus('success', '読み取り成功！');
-            outputEl.textContent = text;
 
             if (navigator.vibrate) navigator.vibrate(200);
         }
 
-        function resetScan() {
-            log('リセット');
-            outputEl.textContent = 'スキャン中...';
-            setStatus('', 'QRコードを枠内に映してください');
-            scanning = true;
-            scanInterval = setInterval(scanFrame, 250);
+        // エラー時（QR見つからない = 正常なので無視）
+        function onScanError(err) {
+            // 何もしない
         }
 
-        function stopCamera() {
-            scanning = false;
-            if (scanInterval) clearInterval(scanInterval);
-            if (stream) {
-                stream.getTracks().forEach(t => t.stop());
+        async function startScan() {
+            log('スキャン開始...');
+            setStatus('', '📷 QRコードを映してください');
+
+            try {
+                // ネイティブBarcodeDetectorを使う設定
+                await html5QrCode.start(
+                    { facingMode: "environment" },
+                    {
+                        fps: 10,
+                        qrbox: { width: 280, height: 280 },
+                        // ネイティブ検出を有効化（お薬手帳アプリと同じ方式）
+                        experimentalFeatures: {
+                            useBarCodeDetectorIfSupported: true
+                        }
+                    },
+                    onScanSuccess,
+                    onScanError
+                );
+                isScanning = true;
+
+                // ネイティブ検出が使えるかチェック
+                if ('BarcodeDetector' in window) {
+                    log('ネイティブBarcodeDetector: 利用可能');
+                } else {
+                    log('ネイティブBarcodeDetector: 利用不可（jsQRフォールバック）');
+                }
+
+                log('カメラ起動OK');
+            } catch (err) {
+                log('カメラエラー: ' + err);
+                setStatus('error', '❌ カメラ起動失敗');
+                alert('カメラ起動失敗:\n' + err);
             }
         }
 
-        // Init
-        window.onload = () => {
+        async function stopScan() {
+            if (html5QrCode && isScanning) {
+                try {
+                    await html5QrCode.stop();
+                    isScanning = false;
+                } catch (e) { }
+            }
+        }
+
+        async function resetScan() {
+            log('リセット');
+            outputEl.textContent = 'スキャン中...';
+            await startScan();
+        }
+
+        window.onload = async () => {
             log('アプリ起動');
 
-            if (typeof window.ZXingScanner === 'undefined' || !window.ZXingScanner.readBarcodes) {
-                log('FATAL: ZXingScanner なし');
-                setStatus('error', 'ライブラリ読込失敗');
-                alert('ZXingライブラリの読み込みに失敗しました。\nzxing-bundle.js を配置してください。');
+            if (typeof Html5Qrcode === 'undefined') {
+                log('FATAL: ライブラリなし');
+                setStatus('error', '❌ ライブラリ読込失敗');
                 return;
             }
 
-            log('ZXingScanner 読込OK');
-            startCamera();
+            log('Html5Qrcode 読込OK');
+            html5QrCode = new Html5Qrcode("reader");
+            await startScan();
         };
-
-        window.onbeforeunload = stopCamera;
     </script>
 </body>
 
